@@ -612,14 +612,6 @@ B3_HD B3_INL float b3_minf(float a, float b) {
     return a < b ? a : b;
 }
 
-B3_HD B3_INL B3Vec3 b3_minv(B3Vec3 a, B3Vec3 b) {
-    return b3_v(b3_minf(a.x, b.x), b3_minf(a.y, b.y), b3_minf(a.z, b.z));
-}
-
-B3_HD B3_INL B3Vec3 b3_maxv(B3Vec3 a, B3Vec3 b) {
-    return b3_v(b3_maxf(a.x, b.x), b3_maxf(a.y, b.y), b3_maxf(a.z, b.z));
-}
-
 B3_HD B3_INL B3Quat b3_q(float x, float y, float z, float s) {
     B3Quat q;
     q.v = b3_v(x, y, z);
@@ -871,21 +863,6 @@ B3_HD B3_INL B3Quat b3_q_from_z(B3Vec3 z) {
     }
     B3Vec3 axis = b3_cross(from, z);
     return b3_qnorm(b3_q(axis.x, axis.y, axis.z, 1.0f + d));
-}
-
-B3_HD B3_INL B3Vec3 b3_q_delta_rot(B3Quat q, B3Quat target) {
-    B3Quat s = q;
-    if (b3_qdot(q, target) < 0.0f) {
-        s = b3_qneg(q);
-    }
-    B3Quat diff = b3_q(target.v.x - s.v.x, target.v.y - s.v.y,
-        target.v.z - s.v.z, target.s - s.s);
-    B3Quat product = b3_qmul(diff, b3_qconj(s));
-    return b3_mul(product.v, 2.0f);
-}
-
-B3_HD B3_INL float b3_det3(B3Mat3 m) {
-    return b3_dot(m.cx, b3_cross(m.cy, m.cz));
 }
 
 B3_HD B3_INL B3Vec3 b3_solve3(B3Mat3 a, B3Vec3 b) {
@@ -1148,8 +1125,12 @@ B3_HD B3_INL B3AABB b3_shape_aabb(const B3Body* b, const B3Shape* s) {
         B3Vec3 c1 = b3_sub(p, y);
         B3Vec3 c2 = b3_add(p, y);
         B3Vec3 e = b3_v(s->radius, s->radius, s->radius);
-        a.lo = b3_sub(b3_minv(c1, c2), e);
-        a.hi = b3_add(b3_maxv(c1, c2), e);
+        a.lo = b3_v(b3_minf(c1.x, c2.x), b3_minf(c1.y, c2.y),
+            b3_minf(c1.z, c2.z));
+        a.hi = b3_v(b3_maxf(c1.x, c2.x), b3_maxf(c1.y, c2.y),
+            b3_maxf(c1.z, c2.z));
+        a.lo = b3_sub(a.lo, e);
+        a.hi = b3_add(a.hi, e);
         return a;
     }
     B3Vec3 ax, ay, az;
@@ -1261,19 +1242,6 @@ B3_HD B3_INL void b3_collide_balls(B3Mani* m, B3Vec3 ca, float ra,
         dist - rad, feat);
 }
 
-B3_HD B3_INL void b3_collide_spheres(B3Mani* m, B3Vec3 ca, float ra,
-        B3Vec3 cb, float rb) {
-    b3_collide_balls(m, ca, ra, cb, rb, 1u);
-}
-
-B3_HD B3_INL void b3_collide_capsules(B3Mani* m,
-        B3Vec3 a1, B3Vec3 a2, float ra, B3Vec3 b1, B3Vec3 b2, float rb) {
-    B3Vec3 pa;
-    B3Vec3 pb;
-    b3_closest_segs(a1, a2, b1, b2, &pa, &pb);
-    b3_collide_balls(m, pa, ra, pb, rb, 2u);
-}
-
 B3_HD B3_INL B3Vec3 b3_closest_obb(B3Vec3 c, B3Quat q, B3Vec3 half,
         B3Vec3 p, int* inside, int* face) {
     B3Vec3 local = b3_inv_rotate(q, b3_sub(p, c));
@@ -1305,13 +1273,9 @@ B3_HD B3_INL B3Vec3 b3_closest_obb(B3Vec3 c, B3Quat q, B3Vec3 half,
     return b3_xf_point(c, q, cl);
 }
 
-B3_HD B3_INL void b3_collide_sphere_box(B3Mani* m, B3Vec3 sc, float r,
-        B3Vec3 bc, B3Quat bq, B3Vec3 half) {
-    b3_mani_clear(m);
-    int inside;
-    int face;
-    B3Vec3 q = b3_closest_obb(bc, bq, half, sc, &inside, &face);
-    B3Vec3 d = b3_sub(sc, q);
+B3_HD B3_INL void b3_collide_ball_point(B3Mani* m, B3Vec3 p, float r,
+        B3Vec3 q, int inside, B3Vec3 n_fb, uint32_t feat) {
+    B3Vec3 d = b3_sub(p, q);
     float dist2 = b3_len2(d);
     if (!inside && dist2 > r * r) {
         return;
@@ -1319,12 +1283,7 @@ B3_HD B3_INL void b3_collide_sphere_box(B3Mani* m, B3Vec3 sc, float r,
     B3Vec3 n;
     float sep;
     if (inside) {
-        n = b3_norm(d);
-        if (b3_len2(d) < 1.0e-12f) {
-            B3Vec3 ax, ay, az;
-            b3_axes(bq, &ax, &ay, &az);
-            n = face == 0 ? ax : (face == 1 ? ay : az);
-        }
+        n = dist2 > 1.0e-12f ? b3_norm(d) : n_fb;
         sep = -b3_len(d) - r;
     } else {
         float dist = sqrtf(dist2);
@@ -1332,12 +1291,19 @@ B3_HD B3_INL void b3_collide_sphere_box(B3Mani* m, B3Vec3 sc, float r,
         sep = dist - r;
     }
     m->normal = n;
-    b3_mani_push(m, b3_msub(sc, r, n), q, sep, 3u);
+    b3_mani_push(m, b3_msub(p, r, n), q, sep, feat);
 }
 
-B3_HD B3_INL void b3_collide_capsule_sphere(B3Mani* m,
-        B3Vec3 c1, B3Vec3 c2, float cr, B3Vec3 sc, float sr) {
-    b3_collide_balls(m, b3_closest_seg(c1, c2, sc), cr, sc, sr, 4u);
+B3_HD B3_INL void b3_collide_sphere_box(B3Mani* m, B3Vec3 sc, float r,
+        B3Vec3 bc, B3Quat bq, B3Vec3 half) {
+    b3_mani_clear(m);
+    int inside;
+    int face;
+    B3Vec3 q = b3_closest_obb(bc, bq, half, sc, &inside, &face);
+    B3Vec3 ax, ay, az;
+    b3_axes(bq, &ax, &ay, &az);
+    B3Vec3 n_fb = face == 0 ? ax : (face == 1 ? ay : az);
+    b3_collide_ball_point(m, sc, r, q, inside, n_fb, 3u);
 }
 
 B3_HD B3_INL void b3_collide_capsule_box(B3Mani* m,
@@ -1350,23 +1316,7 @@ B3_HD B3_INL void b3_collide_capsule_box(B3Mani* m,
     B3Vec3 p = b3_closest_seg(c1, c2, q);
     q = b3_closest_obb(bc, bq, half, p, &inside, &face);
     p = b3_closest_seg(c1, c2, q);
-    B3Vec3 d = b3_sub(p, q);
-    float dist2 = b3_len2(d);
-    if (!inside && dist2 > r * r) {
-        return;
-    }
-    B3Vec3 n;
-    float sep;
-    if (inside) {
-        n = b3_len2(d) > 1.0e-12f ? b3_norm(d) : b3_v(0.0f, 1.0f, 0.0f);
-        sep = -b3_len(d) - r;
-    } else {
-        float dist = sqrtf(dist2);
-        n = b3_mul(d, b3_rsqrt(dist2));
-        sep = dist - r;
-    }
-    m->normal = n;
-    b3_mani_push(m, b3_msub(p, r, n), q, sep, 5u);
+    b3_collide_ball_point(m, p, r, q, inside, b3_v(0.0f, 1.0f, 0.0f), 5u);
 }
 
 typedef struct B3Obb {
@@ -1705,19 +1655,21 @@ B3_HD B3_INL void b3_collide_pair(B3Mani* m, const B3Body* ba, const B3Shape* sa
         flip = 1;
     }
     if (ta == B3_SPHERE && tb == B3_SPHERE) {
-        b3_collide_spheres(m, pa, sa->radius, pb, sb->radius);
+        b3_collide_balls(m, pa, sa->radius, pb, sb->radius, 1u);
     } else if (ta == B3_SPHERE && tb == B3_CAPSULE) {
         B3Vec3 y = b3_rotate(qb, b3_v(0.0f, sb->half.y, 0.0f));
-        b3_collide_capsule_sphere(m, b3_sub(pb, y), b3_add(pb, y),
-            sb->radius, pa, sa->radius);
+        b3_collide_balls(m, b3_closest_seg(b3_sub(pb, y), b3_add(pb, y),
+            pa), sb->radius, pa, sa->radius, 4u);
         b3_mani_flip(m);
     } else if (ta == B3_SPHERE && tb == B3_BOX) {
         b3_collide_sphere_box(m, pa, sa->radius, pb, qb, sb->half);
     } else if (ta == B3_CAPSULE && tb == B3_CAPSULE) {
         B3Vec3 ya = b3_rotate(qa, b3_v(0.0f, sa->half.y, 0.0f));
         B3Vec3 yb = b3_rotate(qb, b3_v(0.0f, sb->half.y, 0.0f));
-        b3_collide_capsules(m, b3_sub(pa, ya), b3_add(pa, ya), sa->radius,
-            b3_sub(pb, yb), b3_add(pb, yb), sb->radius);
+        B3Vec3 ca, cb;
+        b3_closest_segs(b3_sub(pa, ya), b3_add(pa, ya),
+            b3_sub(pb, yb), b3_add(pb, yb), &ca, &cb);
+        b3_collide_balls(m, ca, sa->radius, cb, sb->radius, 2u);
     } else if (ta == B3_CAPSULE && tb == B3_BOX) {
         B3Vec3 y = b3_rotate(qa, b3_v(0.0f, sa->half.y, 0.0f));
         b3_collide_capsule_box(m, b3_sub(pa, y), b3_add(pa, y),
@@ -1871,25 +1823,18 @@ B3_HD B3_INL float b3_joint_speed(const B3World* w, int joint) {
     return b3_dot(b3_sub(bb->ang_vel, ba->ang_vel), axis);
 }
 
-B3_HD B3_INL float b3_body_dyn_mass(const B3Body* b) {
-    return b->type == B3_DYNAMIC ? b->inv_mass : 0.0f;
-}
-
-B3_HD B3_INL B3Mat3 b3_body_dyn_i(const B3Body* b) {
-    return b->type == B3_DYNAMIC ? b->inv_i_world : b3_mat0();
-}
-
 B3_HD B3_INL void b3_prepare_joints(B3World* w, float h) {
     for (int i = 0; i < w->joint_count; i++) {
         B3Joint* j = &w->joints[i];
         const B3Body* ba = &w->bodies[j->body_a];
         const B3Body* bb = &w->bodies[j->body_b];
-        j->inv_mass_a = b3_body_dyn_mass(ba);
-        j->inv_mass_b = b3_body_dyn_mass(bb);
-        j->inv_i_a = b3_body_dyn_i(ba);
-        j->inv_i_b = b3_body_dyn_i(bb);
+        j->inv_mass_a = ba->type == B3_DYNAMIC ? ba->inv_mass : 0.0f;
+        j->inv_mass_b = bb->type == B3_DYNAMIC ? bb->inv_mass : 0.0f;
+        j->inv_i_a = ba->type == B3_DYNAMIC ? ba->inv_i_world : b3_mat0();
+        j->inv_i_b = bb->type == B3_DYNAMIC ? bb->inv_i_world : b3_mat0();
         B3Mat3 isum = b3_maddm(j->inv_i_a, j->inv_i_b);
-        j->fixed_rotation = b3_det3(isum) < 1.0e-20f;
+        j->fixed_rotation = b3_dot(isum.cx, b3_cross(isum.cy, isum.cz))
+            < 1.0e-20f;
         j->softness = b3_make_soft(j->constraint_hertz,
             j->constraint_damping, h);
         j->frame_q_a = b3_qmul(ba->rotation, j->local_rot_a);
@@ -1974,11 +1919,6 @@ B3_HD B3_INL B3Mat3 b3_point_k_gs(float ma, float mb, B3Mat3 ia, B3Mat3 ib,
     return k;
 }
 
-B3_HD B3_INL B3Mat3 b3_point_k(const B3Joint* j, B3Vec3 ra, B3Vec3 rb) {
-    return b3_point_k_gs(j->inv_mass_a, j->inv_mass_b, j->inv_i_a, j->inv_i_b,
-        ra, rb);
-}
-
 B3_HD B3_INL void b3_solve_point(B3Joint* j, B3Body* ba, B3Body* bb,
         B3Vec3* va, B3Vec3* wa, B3Vec3* vb, B3Vec3* wb, B3Soft soft,
         int use_bias) {
@@ -1996,7 +1936,8 @@ B3_HD B3_INL void b3_solve_point(B3Joint* j, B3Body* ba, B3Body* bb,
         mscale = soft.mass_scale;
         iscale = soft.impulse_scale;
     }
-    B3Vec3 b = b3_solve3(b3_point_k(j, ra, rb), b3_add(cdot, bias));
+    B3Vec3 b = b3_solve3(b3_point_k_gs(j->inv_mass_a, j->inv_mass_b,
+        j->inv_i_a, j->inv_i_b, ra, rb), b3_add(cdot, bias));
     B3Vec3 impulse = b3_msub(b3_mul(b, -mscale), iscale, j->linear_impulse);
     j->linear_impulse = b3_add(j->linear_impulse, impulse);
     *va = b3_msub(*va, j->inv_mass_a, impulse);
@@ -2023,8 +1964,13 @@ B3_HD B3_INL void b3_solve_weld(B3Joint* j, B3Body* ba, B3Body* bb,
         float mscale = 1.0f;
         float iscale = 0.0f;
         if (use_bias || j->angular_hertz > 0.0f) {
+            B3Quat s = rel;
+            if (rel.s < 0.0f) {
+                s = b3_qneg(rel);
+            }
+            B3Quat diff = b3_q(-s.v.x, -s.v.y, -s.v.z, 1.0f - s.s);
             B3Vec3 c = b3_neg(b3_rotate(qa,
-                b3_q_delta_rot(rel, b3_q_id())));
+                b3_mul(b3_qmul(diff, b3_qconj(s)).v, 2.0f)));
             bias = b3_mul(c, j->angular_spring.bias_rate);
             mscale = j->angular_spring.mass_scale;
             iscale = j->angular_spring.impulse_scale;
@@ -2059,7 +2005,8 @@ B3_HD B3_INL void b3_cache_revolute(B3Joint* j, const B3Body* ba,
     B3Vec3 rb = b3_rotate(bb->delta_rot, j->frame_p_b);
     j->cache_ra = ra;
     j->cache_rb = rb;
-    j->cache_point_invk = b3_invert3(b3_point_k(j, ra, rb));
+    j->cache_point_invk = b3_invert3(b3_point_k_gs(j->inv_mass_a,
+        j->inv_mass_b, j->inv_i_a, j->inv_i_b, ra, rb));
     B3Quat qa = b3_qmul(ba->delta_rot, j->frame_q_a);
     B3Quat qb = b3_qmul(bb->delta_rot, j->frame_q_b);
     if (b3_qdot(qa, qb) < 0.0f) {
@@ -2863,8 +2810,8 @@ B3_HD B3_INL void b3_gs_load(const B3World* w, B3GsBody* bl,
         bl[i].ang_vel = b->ang_vel;
         bl[i].delta_pos = b->delta_pos;
         bl[i].delta_rot = b->delta_rot;
-        bl[i].inv_mass = b3_body_dyn_mass(b);
-        bl[i].inv_i = b3_body_dyn_i(b);
+        bl[i].inv_mass = b->type == B3_DYNAMIC ? b->inv_mass : 0.0f;
+        bl[i].inv_i = b->type == B3_DYNAMIC ? b->inv_i_world : b3_mat0();
         bl[i].flags = b->flags;
     }
     for (int i = 0; i < nj; i++) {
@@ -4036,23 +3983,26 @@ B3_HD B3_INL void b3_integrate_positions(B3World* w, float h,
     }
 }
 
+B3_HD B3_INL void b3_body_fin(B3Body* b) {
+    if (b->type == B3_STATIC) {
+        return;
+    }
+    b->center = b3_add(b->center, b->delta_pos);
+    b->rotation = b3_qnorm(b3_qmul(b->delta_rot, b->rotation));
+    b->position = b3_sub(b->center,
+        b3_rotate(b->rotation, b->local_center));
+    b->delta_pos = b3_v(0.0f, 0.0f, 0.0f);
+    b->delta_rot = b3_q_id();
+    b->force = b3_v(0.0f, 0.0f, 0.0f);
+    b->torque = b3_v(0.0f, 0.0f, 0.0f);
+    if (b->type == B3_DYNAMIC) {
+        b->inv_i_world = b3_world_inv_i(b->rotation, b->inv_inertia);
+    }
+}
+
 B3_HD B3_INL void b3_finalize_transforms(B3World* w) {
     for (int i = 0; i < w->body_count; i++) {
-        B3Body* b = &w->bodies[i];
-        if (b->type == B3_STATIC) {
-            continue;
-        }
-        b->center = b3_add(b->center, b->delta_pos);
-        b->rotation = b3_qnorm(b3_qmul(b->delta_rot, b->rotation));
-        b->position = b3_sub(b->center,
-            b3_rotate(b->rotation, b->local_center));
-        b->delta_pos = b3_v(0.0f, 0.0f, 0.0f);
-        b->delta_rot = b3_q_id();
-        b->force = b3_v(0.0f, 0.0f, 0.0f);
-        b->torque = b3_v(0.0f, 0.0f, 0.0f);
-        if (b->type == B3_DYNAMIC) {
-            b->inv_i_world = b3_world_inv_i(b->rotation, b->inv_inertia);
-        }
+        b3_body_fin(&w->bodies[i]);
     }
 }
 

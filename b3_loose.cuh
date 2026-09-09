@@ -315,17 +315,7 @@ static B3_HD B3_INL void b3_gyro_step(B3Body* b, float h) {
 
 static B3_HD B3_INL void b3_loose_body_int_v(B3Body* b, B3Vec3 gravity,
         float h) {
-    if (b->type != B3_DYNAMIC) {
-        return;
-    }
-    float ld = 1.0f / (1.0f + h * b->linear_damping);
-    float ad = 1.0f / (1.0f + h * b->angular_damping);
-    float gs = b->inv_mass > 0.0f ? b->gravity_scale : 0.0f;
-    B3Vec3 dv = b3_add(b3_mul(b->force, h * b->inv_mass),
-        b3_mul(gravity, h * gs));
-    b->lin_vel = b3_madd(dv, ld, b->lin_vel);
-    B3Vec3 dw = b3_mul(b3_mv(b->inv_i_world, b->torque), h);
-    b->ang_vel = b3_madd(dw, ad, b->ang_vel);
+    b3_integrate_velocity_state(b, gravity, h, &b->lin_vel, &b->ang_vel);
     b3_gyro_step(b, h);
 }
 
@@ -365,26 +355,9 @@ static B3_HD B3_INL void b3_loose_int_p(B3Loose* s, float h, float inv_dt) {
     }
 }
 
-static B3_HD B3_INL void b3_loose_body_fin(B3Body* b) {
-    if (b->type == B3_STATIC) {
-        return;
-    }
-    b->center = b3_add(b->center, b->delta_pos);
-    b->rotation = b3_qnorm(b3_qmul(b->delta_rot, b->rotation));
-    b->position = b3_sub(b->center,
-        b3_rotate(b->rotation, b->local_center));
-    b->delta_pos = b3_v(0.0f, 0.0f, 0.0f);
-    b->delta_rot = b3_q_id();
-    b->force = b3_v(0.0f, 0.0f, 0.0f);
-    b->torque = b3_v(0.0f, 0.0f, 0.0f);
-    if (b->type == B3_DYNAMIC) {
-        b->inv_i_world = b3_world_inv_i(b->rotation, b->inv_inertia);
-    }
-}
-
 static B3_HD B3_INL void b3_loose_fin(B3Loose* s) {
     for (int i = 0; i < s->n_bodies; i++) {
-        b3_loose_body_fin(&s->bodies[i]);
+        b3_body_fin(&s->bodies[i]);
     }
 }
 
@@ -521,18 +494,6 @@ static inline void b3_loose_step(B3Loose* s, float dt, int substeps) {
         b3_loose_gs(s, inv_h, 0, B3_LOOSE_ITERS);
     }
     b3_loose_fin(s);
-}
-
-static inline void b3_loose_settle(B3Loose* s, float dt, int substeps, int n) {
-    for (int i = 0; i < n; i++) {
-        b3_loose_step(s, dt, substeps);
-    }
-    for (int i = 0; i < s->n_bodies; i++) {
-        s->bodies[i].lin_vel = b3_v(0.0f, 0.0f, 0.0f);
-        s->bodies[i].ang_vel = b3_v(0.0f, 0.0f, 0.0f);
-        s->bodies[i].force = b3_v(0.0f, 0.0f, 0.0f);
-        s->bodies[i].torque = b3_v(0.0f, 0.0f, 0.0f);
-    }
 }
 
 static inline int b3_x_find(B3World* robot, B3Loose* cubes, B3Contact* xc,
@@ -678,7 +639,7 @@ __global__ void b3_loose_k_int_p(B3Body* bodies, int n, float h, float inv_dt,
 __global__ void b3_loose_k_fin(B3Body* bodies, int n, const int* gate) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        b3_loose_body_fin(&bodies[i]);
+        b3_body_fin(&bodies[i]);
     }
 }
 

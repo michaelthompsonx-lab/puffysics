@@ -128,14 +128,6 @@ static B3_HD B3_INL B3Inertia b3_I0(void) {
     return I;
 }
 
-static B3_HD B3_INL B3Mat3 b3_mat3_id(void) {
-    B3Mat3 m;
-    m.cx = b3_v(1.0f, 0.0f, 0.0f);
-    m.cy = b3_v(0.0f, 1.0f, 0.0f);
-    m.cz = b3_v(0.0f, 0.0f, 1.0f);
-    return m;
-}
-
 static B3_HD B3_INL B3Mat3 b3_mat3_sub(B3Mat3 a, B3Mat3 b) {
     B3Mat3 r;
     r.cx = b3_sub(a.cx, b.cx);
@@ -192,13 +184,6 @@ static B3_HD B3_INL B3Inertia b3_I_add(B3Inertia a, B3Inertia b) {
     return r;
 }
 
-static B3_HD B3_INL B3Inertia b3_I_com(float mass, B3Mat3 I_world) {
-    B3Inertia I = b3_I0();
-    I.ww = I_world;
-    I.vv = b3_mat3_scale(b3_mat3_id(), mass);
-    return I;
-}
-
 static B3_HD B3_INL B3Inertia b3_I_shift(B3Inertia I, B3Vec3 r) {
     B3Inertia O = b3_I0();
     for (int k = 0; k < 6; k++) {
@@ -238,13 +223,6 @@ static B3_HD B3_INL B3Motion b3_S_mul(B3Motion S, float s) {
     m.w = b3_mul(S.w, s);
     m.v = b3_mul(S.v, s);
     return m;
-}
-
-static B3_HD B3_INL B3Force b3_Xstar(B3Force f, B3Vec3 r) {
-    B3Force p;
-    p.n = b3_add(f.n, b3_cross(r, f.f));
-    p.f = f.f;
-    return p;
 }
 
 static B3_HD B3_INL int b3_solve6(const float A[36], const float b[6],
@@ -337,10 +315,6 @@ static B3_HD B3_INL int b3_I_solve(B3Inertia I, B3Force rhs, B3Motion* a) {
     return 1;
 }
 
-static B3_HD B3_INL B3Mat3 b3_I_world_of(B3Quat q, B3Vec3 I_local) {
-    return b3_world_inv_i(q, I_local);
-}
-
 static B3_HD B3_INL int b3_art_clear(B3Art* art) {
     memset(art, 0, sizeof(*art));
     for (int i = 0; i < B3_ART_MAX_LINKS; i++) {
@@ -348,6 +322,17 @@ static B3_HD B3_INL int b3_art_clear(B3Art* art) {
         art->joint[i] = -1;
     }
     return 1;
+}
+
+static B3_HD B3_INL void b3_art_link_from_body(B3Art* art, int li,
+        const B3Body* bd) {
+    art->mass[li] = bd->inv_mass > 0.0f ? 1.0f / bd->inv_mass : 0.0f;
+    art->I_local[li] = b3_v(
+        bd->inv_inertia.x > 0.0f ? 1.0f / bd->inv_inertia.x : 0.0f,
+        bd->inv_inertia.y > 0.0f ? 1.0f / bd->inv_inertia.y : 0.0f,
+        bd->inv_inertia.z > 0.0f ? 1.0f / bd->inv_inertia.z : 0.0f);
+    art->local_center[li] = bd->local_center;
+    art->gravity_scale[li] = bd->gravity_scale;
 }
 
 static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
@@ -397,14 +382,8 @@ static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
 
     for (int pass = 0; pass < 2; pass++) {
         for (int s = 0; s < w->body_count; s++) {
-            if (deg[s] == 0 || seen[s]) {
-                continue;
-            }
             int is_static = (w->bodies[s].type != B3_DYNAMIC);
-            if (pass == 0 && !is_static) {
-                continue;
-            }
-            if (pass == 1 && is_static) {
+            if (deg[s] == 0 || seen[s] || is_static != (pass == 0)) {
                 continue;
             }
             int qh = 0, qt = 0;
@@ -456,13 +435,7 @@ static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
                 const B3Body* bd = &w->bodies[b];
                 art->fixed[li] = (bd->type != B3_DYNAMIC);
                 art->floating[li] = (parent_body[b] < 0 && !art->fixed[li]);
-                art->mass[li] = bd->inv_mass > 0.0f ? 1.0f / bd->inv_mass : 0.0f;
-                art->I_local[li] = b3_v(
-                    bd->inv_inertia.x > 0.0f ? 1.0f / bd->inv_inertia.x : 0.0f,
-                    bd->inv_inertia.y > 0.0f ? 1.0f / bd->inv_inertia.y : 0.0f,
-                    bd->inv_inertia.z > 0.0f ? 1.0f / bd->inv_inertia.z : 0.0f);
-                art->local_center[li] = bd->local_center;
-                art->gravity_scale[li] = bd->gravity_scale;
+                b3_art_link_from_body(art, li, bd);
                 if (parent_body[b] < 0) {
                     art->parent[li] = -1;
                     art->joint[li] = -1;
@@ -503,13 +476,7 @@ static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
         art->floating[li] = 1;
         art->parent[li] = -1;
         art->joint[li] = -1;
-        art->mass[li] = bd->inv_mass > 0.0f ? 1.0f / bd->inv_mass : 0.0f;
-        art->I_local[li] = b3_v(
-            bd->inv_inertia.x > 0.0f ? 1.0f / bd->inv_inertia.x : 0.0f,
-            bd->inv_inertia.y > 0.0f ? 1.0f / bd->inv_inertia.y : 0.0f,
-            bd->inv_inertia.z > 0.0f ? 1.0f / bd->inv_inertia.z : 0.0f);
-        art->local_center[li] = bd->local_center;
-        art->gravity_scale[li] = bd->gravity_scale;
+        b3_art_link_from_body(art, li, bd);
         seen[s] = 1;
     }
     art->ok = art->n_links > 0;
@@ -566,8 +533,13 @@ static B3_HD B3_INL void b3_art_refresh(B3Art* art, const B3World* w) {
             art->I[i] = b3_I0();
             art->mass[i] = 0.0f;
         } else {
-            B3Mat3 Iw = b3_I_world_of(art->rot[i], art->I_local[i]);
-            art->I[i] = b3_I_com(art->mass[i], Iw);
+            B3Mat3 Iw = b3_world_inv_i(art->rot[i], art->I_local[i]);
+            art->I[i] = b3_I0();
+            art->I[i].ww = Iw;
+            float m = art->mass[i];
+            art->I[i].vv.cx = b3_v(m, 0.0f, 0.0f);
+            art->I[i].vv.cy = b3_v(0.0f, m, 0.0f);
+            art->I[i].vv.cz = b3_v(0.0f, 0.0f, m);
         }
         art->tau[i] = 0.0f;
         art->qdd[i] = 0.0f;
@@ -651,9 +623,9 @@ static B3_HD B3_INL void b3_art_backward(B3Art* art) {
         pA.f = b3_add(b3_add(pA.f, Ic.f), b3_mul(art->U[i].f, u * art->Dinv[i]));
         if (!art->fixed[p]) {
             art->IA[p] = b3_I_add(art->IA[p], b3_I_shift(IAp, art->r[i]));
-            B3Force add = b3_Xstar(pA, art->r[i]);
-            art->pA[p].n = b3_add(art->pA[p].n, add.n);
-            art->pA[p].f = b3_add(art->pA[p].f, add.f);
+            art->pA[p].n = b3_add(art->pA[p].n,
+                b3_add(pA.n, b3_cross(art->r[i], pA.f)));
+            art->pA[p].f = b3_add(art->pA[p].f, pA.f);
         }
     }
 }
