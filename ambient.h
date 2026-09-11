@@ -43,7 +43,7 @@ typedef struct B3FluidState {
     int have_prev;
 } B3FluidState;
 
-static B3_HD B3_INL B3Fluid b3_fluid_default(void) {
+B3_HD B3_INL B3Fluid b3_fluid_default(void) {
     B3Fluid f;
     memset(&f, 0, sizeof(f));
     f.density = 1.2f;
@@ -59,19 +59,25 @@ static B3_HD B3_INL B3Fluid b3_fluid_default(void) {
     return f;
 }
 
-static B3_HD B3_INL void b3_fluid_state_init(B3FluidState* st) {
+B3_HD B3_INL void b3_fluid_state_init(B3FluidState* st) {
+    if (!st) {
+        return;
+    }
     memset(st, 0, sizeof(*st));
 }
 
-static B3_HD B3_INL void b3_fluid_state_reset(B3FluidState* st) {
+B3_HD B3_INL void b3_fluid_state_reset(B3FluidState* st) {
+    if (!st) {
+        return;
+    }
     st->have_prev = 0;
 }
 
-static B3_HD B3_INL float b3_fcomp(B3Vec3 v, int i) {
+B3_HD B3_INL float b3_fcomp(B3Vec3 v, int i) {
     return i == 0 ? v.x : (i == 1 ? v.y : v.z);
 }
 
-static B3_HD B3_INL B3Vec3 b3_fset(B3Vec3 v, int i, float x) {
+B3_HD B3_INL B3Vec3 b3_fset(B3Vec3 v, int i, float x) {
     if (i == 0) {
         v.x = x;
     } else if (i == 1) {
@@ -85,7 +91,7 @@ static B3_HD B3_INL B3Vec3 b3_fset(B3Vec3 v, int i, float x) {
 /* Lamb Art. 114 ellipsoid added-mass: Simpson on t in (0,1) after
  * u = L^2 t^2 / (1 - t^2), L = max semi-axis.
  */
-static B3_HD B3_INL float b3_fluid_alpha(float s2, float a, float b, float c) {
+B3_HD B3_INL float b3_fluid_alpha(float s2, float a, float b, float c) {
     float l2 = a * a;
     if (b * b > l2) {
         l2 = b * b;
@@ -119,8 +125,11 @@ static B3_HD B3_INL float b3_fluid_alpha(float s2, float a, float b, float c) {
     return sum * hstep / 3.0f;
 }
 
-static B3_HD B3_INL void b3_fluid_added_diag(const B3Fluid* f,
+B3_HD B3_INL void b3_fluid_added_diag(const B3Fluid* f,
         float a, float b, float c, float vol, B3Vec3* out) {
+    if (!f || !out) {
+        return;
+    }
     float ax = b3_fluid_alpha(a * a, a, b, c);
     float ay = b3_fluid_alpha(b * b, a, b, c);
     float az = b3_fluid_alpha(c * c, a, b, c);
@@ -129,7 +138,7 @@ static B3_HD B3_INL void b3_fluid_added_diag(const B3Fluid* f,
     out->z = f->density * vol * az / (2.0f - az);
 }
 
-static B3_HD B3_INL void b3_fluid_volume(const B3Shape* s,
+B3_HD B3_INL void b3_fluid_volume(const B3Shape* s,
         float* vol, B3Vec3* centroid) {
     if (s->type == B3_SPHERE) {
         *vol = (4.0f / 3.0f) * B3_PI * s->radius * s->radius * s->radius;
@@ -147,7 +156,7 @@ static B3_HD B3_INL void b3_fluid_volume(const B3Shape* s,
     *centroid = s->local_pos;
 }
 
-static B3_HD B3_INL void b3_fluid_equiv_axes(const B3Shape* s,
+B3_HD B3_INL void b3_fluid_equiv_axes(const B3Shape* s,
         float* a, float* b, float* c) {
     if (s->type == B3_SPHERE) {
         *a = *b = *c = s->radius;
@@ -165,7 +174,7 @@ static B3_HD B3_INL void b3_fluid_equiv_axes(const B3Shape* s,
     *b = 1.5f * s->half.y + r;
 }
 
-static B3_HD B3_INL int b3_fluid_sample(const B3Fluid* f, const B3Shape* s,
+B3_HD B3_INL int b3_fluid_sample(const B3Fluid* f, const B3Shape* s,
         int k, B3Vec3* pos, B3Vec3* normal, float* area) {
     if (s->type == B3_SPHERE) {
         int n = f->sphere_samples > 0 ? f->sphere_samples : 16;
@@ -246,8 +255,12 @@ static B3_HD B3_INL int b3_fluid_sample(const B3Fluid* f, const B3Shape* s,
     return 0;
 }
 
-static B3_HD B3_INL void b3_fluid_body(const B3Fluid* f, B3World* w,
+B3_HD B3_INL void b3_fluid_body(const B3Fluid* f, B3World* w,
         B3FluidState* st, int bi, float h) {
+    if (!f || !w || !st || bi < 0 || bi >= w->body_count
+            || bi >= B3_MAX_BODIES) {
+        return;
+    }
     B3Body* b = &w->bodies[bi];
     if (b->type != B3_DYNAMIC) {
         return;
@@ -345,8 +358,11 @@ static B3_HD B3_INL void b3_fluid_body(const B3Fluid* f, B3World* w,
     st->prev_ang[bi] = b->ang_vel;
 }
 
-static B3_HD B3_INL void b3_fluid_step(const B3Fluid* f, B3World* w,
+B3_HD B3_INL void b3_fluid_step(const B3Fluid* f, B3World* w,
         B3FluidState* st, float h) {
+    if (!f || !w || !st) {
+        return;
+    }
     for (int bi = 0; bi < w->body_count; bi++) {
         b3_fluid_body(f, w, st, bi, h);
     }

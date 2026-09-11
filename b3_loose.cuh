@@ -56,9 +56,13 @@ typedef struct B3Loose {
     B3Contact* contacts;
     int* nb;
     int nb_hops;
+    // Persistent contact-finding scratch (sized by caps at init) so the
+    // simulation hot path never calls malloc/free.
+    B3AABB* scratch_aabb;
+    B3Warm* scratch_warm;
 } B3Loose;
 
-static B3_HD B3_INL void b3_loose_defaults(B3Loose* s) {
+B3_HD B3_INL void b3_loose_defaults(B3Loose* s) {
     s->gravity = b3_v(0.0f, -10.0f, 0.0f);
     s->contact_hertz = 60.0f;
     s->contact_damping = 10.0f;
@@ -69,10 +73,12 @@ static B3_HD B3_INL void b3_loose_defaults(B3Loose* s) {
     s->n_contacts = 0;
     s->overflow = 0;
     s->nb = NULL;
+    s->scratch_aabb = NULL;
+    s->scratch_warm = NULL;
     s->nb_hops = 0;
 }
 
-static B3_HD B3_INL float b3_mani_min_sep(const B3Mani* m) {
+B3_HD B3_INL float b3_mani_min_sep(const B3Mani* m) {
     float s = FLT_MAX;
     for (int i = 0; i < m->count; i++) {
         if (m->sep[i] < s) {
@@ -82,9 +88,14 @@ static B3_HD B3_INL float b3_mani_min_sep(const B3Mani* m) {
     return s;
 }
 
+static inline void b3_loose_free(B3Loose* s);
+
 static inline int b3_loose_init(B3Loose* s, int cap_b, int cap_s, int cap_c) {
     memset(s, 0, sizeof(*s));
     b3_loose_defaults(s);
+    if (cap_b <= 0 || cap_s <= 0 || cap_c <= 0) {
+        return 0;
+    }
     s->cap_bodies = cap_b;
     s->cap_shapes = cap_s;
     s->cap_contacts = cap_c;
@@ -92,12 +103,17 @@ static inline int b3_loose_init(B3Loose* s, int cap_b, int cap_s, int cap_c) {
     s->shapes = (B3Shape*)calloc((size_t)cap_s, sizeof(B3Shape));
     s->contacts = (B3Contact*)calloc((size_t)cap_c, sizeof(B3Contact));
     s->nb = (int*)malloc((size_t)cap_b * (size_t)B3_LOOSE_NB * sizeof(int));
-    if (s->nb) {
-        for (int i = 0; i < cap_b * B3_LOOSE_NB; i++) {
-            s->nb[i] = -1;
-        }
+    s->scratch_aabb = (B3AABB*)malloc((size_t)cap_s * sizeof(B3AABB));
+    s->scratch_warm = (B3Warm*)malloc((size_t)cap_c * sizeof(B3Warm));
+    if (!s->bodies || !s->shapes || !s->contacts || !s->nb
+            || !s->scratch_aabb || !s->scratch_warm) {
+        b3_loose_free(s);
+        return 0;
     }
-    return s->bodies && s->shapes && s->contacts && s->nb;
+    for (int i = 0; i < cap_b * B3_LOOSE_NB; i++) {
+        s->nb[i] = -1;
+    }
+    return 1;
 }
 
 static inline void b3_loose_free(B3Loose* s) {
@@ -105,6 +121,8 @@ static inline void b3_loose_free(B3Loose* s) {
     free(s->shapes);
     free(s->contacts);
     free(s->nb);
+    free(s->scratch_aabb);
+    free(s->scratch_warm);
     memset(s, 0, sizeof(*s));
 }
 
@@ -122,6 +140,11 @@ static inline int b3_loose_add_shape(B3Loose* s, int body, int type,
         B3Vec3 local_pos, B3Quat local_rot, float radius, B3Vec3 half,
         const B3ShapeDef* def) {
     if (s->n_shapes >= s->cap_shapes) {
+        s->overflow = 1;
+        return -1;
+    }
+    if (body < 0 || body >= s->n_bodies
+            || type < B3_SPHERE || type > B3_BOX) {
         s->overflow = 1;
         return -1;
     }
@@ -298,7 +321,7 @@ static inline int b3_loose_any_dynamic(const B3Loose* s) {
     return 0;
 }
 
-static B3_HD B3_INL void b3_gyro_step(B3Body* b, float h) {
+B3_HD B3_INL void b3_gyro_step(B3Body* b, float h) {
     if (b->type != B3_DYNAMIC) {
         return;
     }
@@ -313,19 +336,19 @@ static B3_HD B3_INL void b3_gyro_step(B3Body* b, float h) {
     b->ang_vel = b3_sub(b->ang_vel, b3_mul(b3_mv(b->inv_i_world, gyro), h));
 }
 
-static B3_HD B3_INL void b3_loose_body_int_v(B3Body* b, B3Vec3 gravity,
+B3_HD B3_INL void b3_loose_body_int_v(B3Body* b, B3Vec3 gravity,
         float h) {
     b3_integrate_velocity_state(b, gravity, h, &b->lin_vel, &b->ang_vel);
     b3_gyro_step(b, h);
 }
 
-static B3_HD B3_INL void b3_loose_int_v(B3Loose* s, float h) {
+B3_HD B3_INL void b3_loose_int_v(B3Loose* s, float h) {
     for (int i = 0; i < s->n_bodies; i++) {
         b3_loose_body_int_v(&s->bodies[i], s->gravity, h);
     }
 }
 
-static B3_HD B3_INL void b3_loose_body_int_p(B3Body* b, float h, float inv_dt,
+B3_HD B3_INL void b3_loose_body_int_p(B3Body* b, float h, float inv_dt,
         float max_lin) {
     if (b->type == B3_STATIC) {
         return;
@@ -349,25 +372,25 @@ static B3_HD B3_INL void b3_loose_body_int_p(B3Body* b, float h, float inv_dt,
     b->delta_rot = b3_q_integrate(b->delta_rot, b3_mul(av, h));
 }
 
-static B3_HD B3_INL void b3_loose_int_p(B3Loose* s, float h, float inv_dt) {
+B3_HD B3_INL void b3_loose_int_p(B3Loose* s, float h, float inv_dt) {
     for (int i = 0; i < s->n_bodies; i++) {
         b3_loose_body_int_p(&s->bodies[i], h, inv_dt, s->max_linear_speed);
     }
 }
 
-static B3_HD B3_INL void b3_loose_fin(B3Loose* s) {
+B3_HD B3_INL void b3_loose_fin(B3Loose* s) {
     for (int i = 0; i < s->n_bodies; i++) {
         b3_body_fin(&s->bodies[i]);
     }
 }
 
 static inline void b3_loose_find(B3Loose* s) {
-    B3AABB* aabb = (B3AABB*)malloc((size_t)s->n_shapes * sizeof(B3AABB));
-    if (!aabb) {
+    if (!s->scratch_aabb || !s->scratch_warm) {
         s->overflow = 1;
         s->n_contacts = 0;
         return;
     }
+    B3AABB* aabb = s->scratch_aabb;
     B3Vec3 pad = b3_v(B3_LOOSE_SPECULATIVE, B3_LOOSE_SPECULATIVE,
         B3_LOOSE_SPECULATIVE);
     for (int i = 0; i < s->n_shapes; i++) {
@@ -376,10 +399,12 @@ static inline void b3_loose_find(B3Loose* s) {
         aabb[i].hi = b3_add(aabb[i].hi, pad);
     }
     int old_n = s->n_contacts;
-    B3Warm* old = NULL;
+    B3Warm* old = s->scratch_warm;
+    if (old_n > s->cap_contacts) {
+        old_n = s->cap_contacts;
+    }
     if (old_n > 0) {
-        old = (B3Warm*)malloc((size_t)old_n * sizeof(B3Warm));
-        if (old) {
+        {
             for (int i = 0; i < old_n; i++) {
                 const B3Contact* src = &s->contacts[i];
                 old[i].shape_a = src->shape_a;
@@ -441,8 +466,6 @@ static inline void b3_loose_find(B3Loose* s) {
             }
         }
     }
-    free(old);
-    free(aabb);
 }
 
 static inline void b3_loose_prepare(B3Loose* s, B3Soft cs, B3Soft ss) {

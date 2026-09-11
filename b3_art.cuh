@@ -16,6 +16,8 @@
 // Included from puffysics.cuh after the rigid types.
 // b3_art_step lives in puffysics.cuh (needs b3_step_indep).
 #pragma once
+#ifndef B3_ART_CUH
+#define B3_ART_CUH
 
 #ifndef B3_ART_MAX_LINKS
 #define B3_ART_MAX_LINKS B3_MAX_BODIES
@@ -105,21 +107,21 @@ typedef struct B3Art {
     int cut_body_b[B3_ART_MAX_CUTS];
 } B3Art;
 
-static B3_HD B3_INL B3Motion b3_motion0(void) {
+B3_HD B3_INL B3Motion b3_motion0(void) {
     B3Motion m;
     m.w = b3_v(0.0f, 0.0f, 0.0f);
     m.v = b3_v(0.0f, 0.0f, 0.0f);
     return m;
 }
 
-static B3_HD B3_INL B3Force b3_force0(void) {
+B3_HD B3_INL B3Force b3_force0(void) {
     B3Force f;
     f.n = b3_v(0.0f, 0.0f, 0.0f);
     f.f = b3_v(0.0f, 0.0f, 0.0f);
     return f;
 }
 
-static B3_HD B3_INL B3Inertia b3_I0(void) {
+B3_HD B3_INL B3Inertia b3_I0(void) {
     B3Inertia I;
     I.ww = b3_mat0();
     I.wv = b3_mat0();
@@ -128,7 +130,7 @@ static B3_HD B3_INL B3Inertia b3_I0(void) {
     return I;
 }
 
-static B3_HD B3_INL B3Mat3 b3_mat3_sub(B3Mat3 a, B3Mat3 b) {
+B3_HD B3_INL B3Mat3 b3_mat3_sub(B3Mat3 a, B3Mat3 b) {
     B3Mat3 r;
     r.cx = b3_sub(a.cx, b.cx);
     r.cy = b3_sub(a.cy, b.cy);
@@ -136,7 +138,7 @@ static B3_HD B3_INL B3Mat3 b3_mat3_sub(B3Mat3 a, B3Mat3 b) {
     return r;
 }
 
-static B3_HD B3_INL B3Mat3 b3_mat3_scale(B3Mat3 a, float s) {
+B3_HD B3_INL B3Mat3 b3_mat3_scale(B3Mat3 a, float s) {
     B3Mat3 r;
     r.cx = b3_mul(a.cx, s);
     r.cy = b3_mul(a.cy, s);
@@ -144,7 +146,7 @@ static B3_HD B3_INL B3Mat3 b3_mat3_scale(B3Mat3 a, float s) {
     return r;
 }
 
-static B3_HD B3_INL B3Mat3 b3_outer(B3Vec3 a, B3Vec3 b) {
+B3_HD B3_INL B3Mat3 b3_outer(B3Vec3 a, B3Vec3 b) {
     B3Mat3 r;
     r.cx = b3_mul(a, b.x);
     r.cy = b3_mul(a, b.y);
@@ -152,7 +154,7 @@ static B3_HD B3_INL B3Mat3 b3_outer(B3Vec3 a, B3Vec3 b) {
     return r;
 }
 
-static B3_HD B3_INL void b3_I_set_col(B3Inertia* I, int col, B3Force f) {
+B3_HD B3_INL void b3_I_set_col(B3Inertia* I, int col, B3Force f) {
     B3Mat3* ang = col < 3 ? &I->ww : &I->wv;
     B3Mat3* lin = col < 3 ? &I->vw : &I->vv;
     int c = col < 3 ? col : col - 3;
@@ -168,14 +170,14 @@ static B3_HD B3_INL void b3_I_set_col(B3Inertia* I, int col, B3Force f) {
     }
 }
 
-static B3_HD B3_INL B3Force b3_I_mul(B3Inertia I, B3Motion m) {
+B3_HD B3_INL B3Force b3_I_mul(B3Inertia I, B3Motion m) {
     B3Force f;
     f.n = b3_add(b3_mv(I.ww, m.w), b3_mv(I.wv, m.v));
     f.f = b3_add(b3_mv(I.vw, m.w), b3_mv(I.vv, m.v));
     return f;
 }
 
-static B3_HD B3_INL B3Inertia b3_I_add(B3Inertia a, B3Inertia b) {
+B3_HD B3_INL B3Inertia b3_I_add(B3Inertia a, B3Inertia b) {
     B3Inertia r;
     r.ww = b3_maddm(a.ww, b.ww);
     r.wv = b3_maddm(a.wv, b.wv);
@@ -184,7 +186,7 @@ static B3_HD B3_INL B3Inertia b3_I_add(B3Inertia a, B3Inertia b) {
     return r;
 }
 
-static B3_HD B3_INL B3Inertia b3_I_shift(B3Inertia I, B3Vec3 r) {
+B3_HD B3_INL B3Inertia b3_I_shift(B3Inertia I, B3Vec3 r) {
     B3Inertia O = b3_I0();
     for (int k = 0; k < 6; k++) {
         B3Motion m = b3_motion0();
@@ -206,7 +208,7 @@ static B3_HD B3_INL B3Inertia b3_I_shift(B3Inertia I, B3Vec3 r) {
     return O;
 }
 
-static B3_HD B3_INL B3Inertia b3_I_rank1(B3Inertia I, B3Force U, float dinv) {
+B3_HD B3_INL B3Inertia b3_I_rank1(B3Inertia I, B3Force U, float dinv) {
     I.ww = b3_mat3_sub(I.ww, b3_mat3_scale(b3_outer(U.n, U.n), dinv));
     I.wv = b3_mat3_sub(I.wv, b3_mat3_scale(b3_outer(U.n, U.f), dinv));
     I.vw = b3_mat3_sub(I.vw, b3_mat3_scale(b3_outer(U.f, U.n), dinv));
@@ -214,18 +216,18 @@ static B3_HD B3_INL B3Inertia b3_I_rank1(B3Inertia I, B3Force U, float dinv) {
     return I;
 }
 
-static B3_HD B3_INL float b3_S_dot(B3Motion S, B3Force f) {
+B3_HD B3_INL float b3_S_dot(B3Motion S, B3Force f) {
     return b3_dot(S.w, f.n) + b3_dot(S.v, f.f);
 }
 
-static B3_HD B3_INL B3Motion b3_S_mul(B3Motion S, float s) {
+B3_HD B3_INL B3Motion b3_S_mul(B3Motion S, float s) {
     B3Motion m;
     m.w = b3_mul(S.w, s);
     m.v = b3_mul(S.v, s);
     return m;
 }
 
-static B3_HD B3_INL int b3_solve6(const float A[36], const float b[6],
+B3_HD B3_INL int b3_solve6(const float A[36], const float b[6],
         float x[6]) {
     float M[6][7];
     for (int r = 0; r < 6; r++) {
@@ -274,7 +276,7 @@ static B3_HD B3_INL int b3_solve6(const float A[36], const float b[6],
     return 1;
 }
 
-static B3_HD B3_INL void b3_I_pack(B3Inertia I, float A[36]) {
+B3_HD B3_INL void b3_I_pack(B3Inertia I, float A[36]) {
     for (int c = 0; c < 3; c++) {
         B3Vec3 n = c == 0 ? I.ww.cx : (c == 1 ? I.ww.cy : I.ww.cz);
         B3Vec3 f = c == 0 ? I.vw.cx : (c == 1 ? I.vw.cy : I.vw.cz);
@@ -297,7 +299,7 @@ static B3_HD B3_INL void b3_I_pack(B3Inertia I, float A[36]) {
     }
 }
 
-static B3_HD B3_INL int b3_I_solve(B3Inertia I, B3Force rhs, B3Motion* a) {
+B3_HD B3_INL int b3_I_solve(B3Inertia I, B3Force rhs, B3Motion* a) {
     float A[36], b[6], x[6];
     b3_I_pack(I, A);
     b[0] = rhs.n.x;
@@ -315,7 +317,7 @@ static B3_HD B3_INL int b3_I_solve(B3Inertia I, B3Force rhs, B3Motion* a) {
     return 1;
 }
 
-static B3_HD B3_INL int b3_art_clear(B3Art* art) {
+B3_HD B3_INL int b3_art_clear(B3Art* art) {
     memset(art, 0, sizeof(*art));
     for (int i = 0; i < B3_ART_MAX_LINKS; i++) {
         art->parent[i] = -1;
@@ -324,7 +326,7 @@ static B3_HD B3_INL int b3_art_clear(B3Art* art) {
     return 1;
 }
 
-static B3_HD B3_INL void b3_art_link_from_body(B3Art* art, int li,
+B3_HD B3_INL void b3_art_link_from_body(B3Art* art, int li,
         const B3Body* bd) {
     art->mass[li] = bd->inv_mass > 0.0f ? 1.0f / bd->inv_mass : 0.0f;
     art->I_local[li] = b3_v(
@@ -335,7 +337,7 @@ static B3_HD B3_INL void b3_art_link_from_body(B3Art* art, int li,
     art->gravity_scale[li] = bd->gravity_scale;
 }
 
-static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
+B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
     b3_art_clear(art);
     int deg[B3_MAX_BODIES];
     int adj_b[B3_MAX_BODIES][B3_ART_MAX_DEG];
@@ -483,18 +485,18 @@ static B3_HD B3_INL int b3_art_from_world(B3Art* art, const B3World* w) {
     return art->ok;
 }
 
-static B3_HD B3_INL int b3_art_bind(B3Art* art, const B3World* w) {
+B3_HD B3_INL int b3_art_bind(B3Art* art, const B3World* w) {
     return w->joint_count > 0 && b3_art_from_world(art, w);
 }
 
-static B3_HD B3_INL void b3_art_lived_pose(const B3Body* b, B3Vec3 lc,
+B3_HD B3_INL void b3_art_lived_pose(const B3Body* b, B3Vec3 lc,
         B3Vec3* pos, B3Quat* rot, B3Vec3* com) {
     *rot = b3_qnorm(b3_qmul(b->delta_rot, b->rotation));
     *com = b3_add(b->center, b->delta_pos);
     *pos = b3_sub(*com, b3_rotate(*rot, lc));
 }
 
-static B3_HD B3_INL float b3_art_joint_q(B3Quat rp, B3Quat rc,
+B3_HD B3_INL float b3_art_joint_q(B3Quat rp, B3Quat rc,
         B3Quat la, B3Quat lb) {
     B3Quat qa = b3_qmul(rp, la);
     B3Quat qb = b3_qmul(rc, lb);
@@ -504,7 +506,7 @@ static B3_HD B3_INL float b3_art_joint_q(B3Quat rp, B3Quat rc,
     return b3_twist(b3_qinv_mul(qa, qb));
 }
 
-static B3_HD B3_INL void b3_art_fk_link(B3Art* art, int i) {
+B3_HD B3_INL void b3_art_fk_link(B3Art* art, int i) {
     int p = art->parent[i];
     if (p < 0) {
         return;
@@ -522,7 +524,7 @@ static B3_HD B3_INL void b3_art_fk_link(B3Art* art, int i) {
     art->pos[i] = b3_sub(com, b3_rotate(rot, art->local_center[i]));
 }
 
-static B3_HD B3_INL void b3_art_refresh(B3Art* art, const B3World* w) {
+B3_HD B3_INL void b3_art_refresh(B3Art* art, const B3World* w) {
     for (int i = 0; i < art->n_links; i++) {
         const B3Body* b = &w->bodies[art->body[i]];
         b3_art_lived_pose(b, art->local_center[i],
@@ -567,7 +569,7 @@ static B3_HD B3_INL void b3_art_refresh(B3Art* art, const B3World* w) {
     }
 }
 
-static B3_HD B3_INL void b3_art_seed_bias(B3Art* art, const B3World* w,
+B3_HD B3_INL void b3_art_seed_bias(B3Art* art, const B3World* w,
         int linear) {
     B3Vec3 g = w->gravity;
     for (int i = 0; i < art->n_links; i++) {
@@ -602,7 +604,7 @@ static B3_HD B3_INL void b3_art_seed_bias(B3Art* art, const B3World* w,
     }
 }
 
-static B3_HD B3_INL void b3_art_backward(B3Art* art) {
+B3_HD B3_INL void b3_art_backward(B3Art* art) {
     for (int i = art->n_links - 1; i >= 0; i--) {
         int p = art->parent[i];
         if (p < 0) {
@@ -630,7 +632,7 @@ static B3_HD B3_INL void b3_art_backward(B3Art* art) {
     }
 }
 
-static B3_HD B3_INL void b3_art_forward(B3Art* art) {
+B3_HD B3_INL void b3_art_forward(B3Art* art) {
     for (int i = 0; i < art->n_links; i++) {
         int p = art->parent[i];
         if (p < 0) {
@@ -663,14 +665,14 @@ static B3_HD B3_INL void b3_art_forward(B3Art* art) {
     }
 }
 
-static B3_HD B3_INL void b3_art_aba(B3Art* art, const B3World* w) {
+B3_HD B3_INL void b3_art_aba(B3Art* art, const B3World* w) {
     b3_art_refresh(art, w);
     b3_art_seed_bias(art, w, 0);
     b3_art_backward(art);
     b3_art_forward(art);
 }
 
-static B3_HD B3_INL B3Force b3_art_row_wrench_ex(B3Vec3 r, B3Vec3 n, float x,
+B3_HD B3_INL B3Force b3_art_row_wrench_ex(B3Vec3 r, B3Vec3 n, float x,
         int torque) {
     B3Force f;
     if (torque == 1) {
@@ -683,7 +685,7 @@ static B3_HD B3_INL B3Force b3_art_row_wrench_ex(B3Vec3 r, B3Vec3 n, float x,
     return f;
 }
 
-static B3_HD B3_INL float b3_art_row_eval(const B3Art* art, const B3ArtRow* row,
+B3_HD B3_INL float b3_art_row_eval(const B3Art* art, const B3ArtRow* row,
         int accel) {
     float y = 0.0f;
     const B3Motion* m = accel ? art->a : art->v;
@@ -718,7 +720,7 @@ static B3_HD B3_INL float b3_art_row_eval(const B3Art* art, const B3ArtRow* row,
 }
 
 /* Δx = J M^{-1} J^T x. Bias / gravity / velocity products off. */
-static B3_HD B3_INL void b3_art_delassus_apply(B3Art* art, const B3World* w,
+B3_HD B3_INL void b3_art_delassus_apply(B3Art* art, const B3World* w,
         const B3ArtRow* rows, const float* x, float* y, int n_rows) {
     b3_art_refresh(art, w);
     for (int i = 0; i < art->n_links; i++) {
@@ -746,7 +748,7 @@ static B3_HD B3_INL void b3_art_delassus_apply(B3Art* art, const B3World* w,
     }
 }
 
-static B3_HD B3_INL int b3_art_link_of(const B3Art* art, int body) {
+B3_HD B3_INL int b3_art_link_of(const B3Art* art, int body) {
     for (int i = 0; i < art->n_links; i++) {
         if (art->body[i] == body) {
             return i;
@@ -756,7 +758,7 @@ static B3_HD B3_INL int b3_art_link_of(const B3Art* art, int body) {
 }
 
 /* Independent-body contact mass (Soft Step). Wrong for a jointed tree. */
-static B3_HD B3_INL float b3_art_indep_w(const B3Body* b, B3Vec3 r, B3Vec3 n) {
+B3_HD B3_INL float b3_art_indep_w(const B3Body* b, B3Vec3 r, B3Vec3 n) {
     if (b->type != B3_DYNAMIC || b->inv_mass <= 0.0f) {
         return 0.0f;
     }
@@ -764,7 +766,7 @@ static B3_HD B3_INL float b3_art_indep_w(const B3Body* b, B3Vec3 r, B3Vec3 n) {
     return b->inv_mass + b3_dot(rn, b3_mv(b->inv_i_world, rn));
 }
 
-static B3_HD B3_INL int b3_art_make_row(const B3Art* art, int body_a, int body_b,
+B3_HD B3_INL int b3_art_make_row(const B3Art* art, int body_a, int body_b,
         B3Vec3 ra, B3Vec3 rb, B3Vec3 n, B3ArtRow* row) {
     row->link_a = body_a >= 0 ? b3_art_link_of(art, body_a) : -1;
     row->link_b = body_b >= 0 ? b3_art_link_of(art, body_b) : -1;
@@ -776,7 +778,7 @@ static B3_HD B3_INL int b3_art_make_row(const B3Art* art, int body_a, int body_b
 }
 
 /* Δ = n · J M^{-1} J^T n. Isolated free bodies match b3_art_indep_w. */
-static B3_HD B3_INL float b3_art_response_w(B3Art* art, const B3World* w,
+B3_HD B3_INL float b3_art_response_w(B3Art* art, const B3World* w,
         const B3ArtRow* row) {
     float x = 1.0f;
     float y = 0.0f;
@@ -784,7 +786,7 @@ static B3_HD B3_INL float b3_art_response_w(B3Art* art, const B3World* w,
     return y;
 }
 
-static B3_HD B3_INL void b3_art_add_delta_vel(const B3Art* art, B3World* w) {
+B3_HD B3_INL void b3_art_add_delta_vel(const B3Art* art, B3World* w) {
     for (int i = 0; i < art->n_links; i++) {
         if (art->fixed[i]) {
             continue;
@@ -796,7 +798,7 @@ static B3_HD B3_INL void b3_art_add_delta_vel(const B3Art* art, B3World* w) {
 }
 
 /* Soft Step contact convention: λ > 0 pushes B along n and A against n. */
-static B3_HD B3_INL void b3_art_apply_impulse(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_apply_impulse(B3Art* art, B3World* w,
         const B3ArtRow* row, float lambda) {
     float x = -lambda;
     float y = 0.0f;
@@ -805,7 +807,7 @@ static B3_HD B3_INL void b3_art_apply_impulse(B3Art* art, B3World* w,
 }
 
 /* Torque-only rolling in the tangent plane. Twist stays on the normal row. */
-static B3_HD B3_INL void b3_art_solve_rolling_fields(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_rolling_fields(B3Art* art, B3World* w,
         int body_a, int body_b, B3Vec3 t1, B3Vec3 t2, float rolling,
         float total_n, B3Vec3* rolling_impulse) {
     float max_r = rolling * total_n;
@@ -864,7 +866,7 @@ static B3_HD B3_INL void b3_art_solve_rolling_fields(B3Art* art, B3World* w,
     }
 }
 
-static B3_HD B3_INL int b3_solve_n(int n, const float* A, const float* b,
+B3_HD B3_INL int b3_solve_n(int n, const float* A, const float* b,
         float* x) {
     if (n < 1) {
         return 1;
@@ -920,7 +922,7 @@ static B3_HD B3_INL int b3_solve_n(int n, const float* A, const float* b,
 }
 
 /* Δ = J M^{-1} J^T, including two-body and row-row fill-in. */
-static B3_HD B3_INL void b3_art_delassus_matrix(B3Art* art, const B3World* w,
+B3_HD B3_INL void b3_art_delassus_matrix(B3Art* art, const B3World* w,
         const B3ArtRow* rows, float* D, int n) {
     float x[B3_ART_MAX_ROWS];
     float y[B3_ART_MAX_ROWS];
@@ -937,7 +939,7 @@ static B3_HD B3_INL void b3_art_delassus_matrix(B3Art* art, const B3World* w,
     }
 }
 
-static B3_HD B3_INL void b3_art_apply_impulses(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_apply_impulses(B3Art* art, B3World* w,
         const B3ArtRow* rows, const float* lambda, int n) {
     float x[B3_ART_MAX_ROWS];
     float y[B3_ART_MAX_ROWS];
@@ -956,7 +958,7 @@ static B3_HD B3_INL void b3_art_apply_impulses(B3Art* art, B3World* w,
 }
 
 /* λ = (μ^{-1} + Δ)^{-1} y. Δ is J M^{-1} J^T from the two-sweep. */
-static B3_HD B3_INL void b3_art_damped_solve(B3Art* art, const B3World* w,
+B3_HD B3_INL void b3_art_damped_solve(B3Art* art, const B3World* w,
         const B3ArtRow* rows, const float* mu, const float* y, float* lambda,
         int n_rows) {
     int n = n_rows < B3_ART_MAX_ROWS ? n_rows : B3_ART_MAX_ROWS;
@@ -976,7 +978,7 @@ static B3_HD B3_INL void b3_art_damped_solve(B3Art* art, const B3World* w,
     }
 }
 
-static B3_HD B3_INL void b3_art_write_delta(B3Art* art, B3World* w, int i) {
+B3_HD B3_INL void b3_art_write_delta(B3Art* art, B3World* w, int i) {
     if (art->fixed[i]) {
         return;
     }
@@ -985,7 +987,7 @@ static B3_HD B3_INL void b3_art_write_delta(B3Art* art, B3World* w, int i) {
     b->delta_rot = b3_qnorm(b3_qmul(art->rot[i], b3_qconj(b->rotation)));
 }
 
-static B3_HD B3_INL void b3_art_integrate_vel(B3Art* art, B3World* w, float h) {
+B3_HD B3_INL void b3_art_integrate_vel(B3Art* art, B3World* w, float h) {
     b3_art_aba(art, w);
     for (int i = 0; i < art->n_links; i++) {
         if (art->fixed[i]) {
@@ -997,7 +999,7 @@ static B3_HD B3_INL void b3_art_integrate_vel(B3Art* art, B3World* w, float h) {
     }
 }
 
-static B3_HD B3_INL void b3_art_integrate_pos(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_integrate_pos(B3Art* art, B3World* w,
         float h, float inv_dt) {
     float max_lin = w->max_linear_speed;
     float max_ang = B3_MAX_ROTATION * inv_dt;
@@ -1029,7 +1031,7 @@ static B3_HD B3_INL void b3_art_integrate_pos(B3Art* art, B3World* w,
     }
 }
 
-static B3_HD B3_INL void b3_art_solve_friction(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_friction(B3Art* art, B3World* w,
         B3Contact* c) {
     float total_n = 0.0f;
     float twist_lim = 0.0f;
@@ -1118,7 +1120,7 @@ static B3_HD B3_INL void b3_art_solve_friction(B3Art* art, B3World* w,
         c->tangent1, c->tangent2, c->rolling, total_n, &c->rolling_impulse);
 }
 
-static B3_HD B3_INL int b3_art_cut_rows(B3Art* art, const B3World* w, int ci,
+B3_HD B3_INL int b3_art_cut_rows(B3Art* art, const B3World* w, int ci,
         B3ArtRow rows[5], float err[5]) {
     const B3Joint* j = &w->joints[art->cut_joint[ci]];
     int la = b3_art_link_of(art, j->body_a);
@@ -1172,7 +1174,7 @@ static B3_HD B3_INL int b3_art_cut_rows(B3Art* art, const B3World* w, int ci,
 
 /* Cut revolute = 3 linear + 2 angular rows. One 5×5 Delassus block per cut.
  * PGS is only the fallback if Δ is singular. */
-static B3_HD B3_INL void b3_art_solve_cuts(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_cuts(B3Art* art, B3World* w,
         float inv_h, int use_bias, int iters) {
     if (art->n_cuts < 1) {
         return;
@@ -1215,7 +1217,7 @@ static B3_HD B3_INL void b3_art_solve_cuts(B3Art* art, B3World* w,
     }
 }
 
-static B3_HD B3_INL void b3_art_solve_contacts(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_contacts(B3Art* art, B3World* w,
         float inv_h, float contact_speed, int use_bias, int iters) {
     if (iters < 1) {
         iters = 1;
@@ -1281,7 +1283,7 @@ static B3_HD B3_INL void b3_art_solve_contacts(B3Art* art, B3World* w,
 #endif
 
 #ifdef B3_PACKED_GS
-static B3_HD B3_INL void b3_art_pull_gs(B3World* w, const B3GsBody* bl) {
+B3_HD B3_INL void b3_art_pull_gs(B3World* w, const B3GsBody* bl) {
     for (int i = 0; i < w->body_count; i++) {
         w->bodies[i].lin_vel = bl[i].lin_vel;
         w->bodies[i].ang_vel = bl[i].ang_vel;
@@ -1290,7 +1292,7 @@ static B3_HD B3_INL void b3_art_pull_gs(B3World* w, const B3GsBody* bl) {
     }
 }
 
-static B3_HD B3_INL void b3_art_push_gs(const B3World* w, B3GsBody* bl) {
+B3_HD B3_INL void b3_art_push_gs(const B3World* w, B3GsBody* bl) {
     for (int i = 0; i < w->body_count; i++) {
         if ((bl[i].flags & B3_FLAG_DYNAMIC) == 0) {
             continue;
@@ -1300,7 +1302,7 @@ static B3_HD B3_INL void b3_art_push_gs(const B3World* w, B3GsBody* bl) {
     }
 }
 
-static B3_HD B3_INL void b3_art_solve_friction_gs(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_friction_gs(B3Art* art, B3World* w,
         B3GsContact* c) {
     float total_n = 0.0f;
     float twist_lim = 0.0f;
@@ -1389,7 +1391,7 @@ static B3_HD B3_INL void b3_art_solve_friction_gs(B3Art* art, B3World* w,
         c->tangent1, c->tangent2, c->rolling, total_n, &c->rolling_impulse);
 }
 
-static B3_HD B3_INL void b3_art_solve_contacts_gs(B3Art* art, B3World* w,
+B3_HD B3_INL void b3_art_solve_contacts_gs(B3Art* art, B3World* w,
         B3GsContact* contacts, int n, B3GsBody* bodies, float inv_h,
         float contact_speed, int use_bias, int iters) {
     if (iters < 1) {
@@ -1451,3 +1453,4 @@ static B3_HD B3_INL void b3_art_solve_contacts_gs(B3Art* art, B3World* w,
     b3_art_push_gs(w, bodies);
 }
 #endif
+#endif // B3_ART_CUH

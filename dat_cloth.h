@@ -6,6 +6,7 @@
  * node) pairs split positions by inverse mass; a later impulse removes
  * closing normal speed at restitution e. Tangential velocity is free.
  */
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,9 +36,17 @@ typedef struct DatCloth {
     uint8_t* pinned;
 } DatCloth;
 
-static void dat_cloth_init(DatCloth* c, int W, int H, float spacing,
+static void dat_cloth_free(DatCloth* c);
+
+static int dat_cloth_init(DatCloth* c, int W, int H, float spacing,
         B3Vec3 origin) {
     memset(c, 0, sizeof(*c));
+    if (W <= 0 || H <= 0 || spacing <= 0.0f || !isfinite(spacing)) {
+        return 0;
+    }
+    if ((size_t)W > (size_t)INT_MAX / (size_t)H) {
+        return 0;
+    }
     c->W = W;
     c->H = H;
     c->n = W * H;
@@ -55,7 +64,9 @@ static void dat_cloth_init(DatCloth* c, int W, int H, float spacing,
     c->snap = (B3Vec3*)malloc((size_t)c->n * sizeof(B3Vec3));
     c->pinned = (uint8_t*)malloc((size_t)c->n);
     if (!c->pos || !c->vel || !c->snap || !c->pinned) {
-        abort();
+        dat_cloth_free(c);
+        memset(c, 0, sizeof(*c));
+        return 0;
     }
     for (int j = 0; j < H; j++) {
         for (int i = 0; i < W; i++) {
@@ -68,6 +79,7 @@ static void dat_cloth_init(DatCloth* c, int W, int H, float spacing,
                 || j == H - 1);
         }
     }
+    return 1;
 }
 
 static void dat_cloth_free(DatCloth* c) {
@@ -75,6 +87,7 @@ static void dat_cloth_free(DatCloth* c) {
     free(c->vel);
     free(c->snap);
     free(c->pinned);
+    memset(c, 0, sizeof(*c));
 }
 
 static void dat_cloth_step(DatCloth* c, float h) {

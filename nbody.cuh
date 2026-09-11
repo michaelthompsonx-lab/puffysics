@@ -9,6 +9,7 @@
  *   nbody_energy(p, v, n, cfg)
  * CUDA: NbodyGpu; nbody_gpu_init, nbody_gpu_free,
  *   nbody_gpu_upload, nbody_gpu_download, nbody_gpu_step
+ * Hierarchical: nbody_tree.cuh Treecode2 (CPU oct-tree, CUDA Morton BRT).
  * Zero-mass tracers feel gravity but do not source it. Mercury-Opal
  * (arXiv:2601.19654) motivates modest-n GPU gravity; this is KDK,
  * not that paper's hybrid integrator. One float pair-force; device uses
@@ -70,6 +71,9 @@ static void nbody_acceleration(NbodyPoint *p, NbodyVec *a,
         int n, NbodyConfig cfg) {
     int i, j;
     float eps2, ax, ay, az;
+    if (n < 0 || !nbody_cfg_ok(cfg) || (n > 0 && !(p && a))) {
+        return;
+    }
     assert(n >= 0 && nbody_cfg_ok(cfg));
     assert(n == 0 || (p && a));
     eps2 = cfg.softening * cfg.softening;
@@ -91,6 +95,10 @@ static void nbody_step(NbodyPoint *p, NbodyVec *v, NbodyVec *scratch,
         int n, float dt, int steps, NbodyConfig cfg) {
     int step, i;
     float half;
+    if (n < 0 || steps < 0 || !nbody_cfg_ok(cfg)
+            || (n > 0 && !(p && v && scratch))) {
+        return;
+    }
     assert(n >= 0 && steps >= 0 && nbody_cfg_ok(cfg));
     assert(n == 0 || (p && v && scratch));
     if (n == 0 || steps == 0 || dt == 0) {
@@ -120,6 +128,9 @@ static double nbody_energy(NbodyPoint *p, NbodyVec *v, int n,
         NbodyConfig cfg) {
     int i, j;
     double eps2, energy, dx, dy, dz;
+    if (n < 0 || !nbody_cfg_ok(cfg) || (n > 0 && !(p && v))) {
+        return 0;
+    }
     assert(n >= 0 && nbody_cfg_ok(cfg));
     assert(n == 0 || (p && v));
     eps2 = (double)cfg.softening * cfg.softening;
@@ -210,68 +221,134 @@ static __global__ void nbody_kick_kernel(NbodyPoint *p, NbodyVec *v,
     }
 }
 
-static void nbody_cuda(cudaError_t err) {
-    assert(err == cudaSuccess);
-}
+// All GPU entry points return cudaSuccess (0) or the first CUDA failure.
+// Callers must check: errors are never read-and-discarded here, and the
+// library never aborts on them. Ignoring the return is allowed in C but
+// discouraged; the play_* viewers fall back to CPU on failure.
 
-static void nbody_gpu_free(NbodyGpu *g) {
-    assert(g);
-    if (g->stream) {
-        nbody_cuda(cudaStreamSynchronize(g->stream));
-        nbody_cuda(cudaStreamDestroy(g->stream));
+static cudaError_t nbody_gpu_free(NbodyGpu *g) {
+    cudaError_t err, first = cudaSuccess;
+    if (!g) {
+        return cudaErrorInvalidValue;
     }
-    nbody_cuda(cudaFree(g->p));
-    nbody_cuda(cudaFree(g->v));
-    nbody_cuda(cudaFree(g->a));
+    if (g->stream) {
+        err = cudaStreamSynchronize(g->stream);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+        err = cudaStreamDestroy(g->stream);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    // cudaFree(NULL) still initializes the driver; skip empty slots so
+    // freeing a zero/partial handle never touches the device.
+    if (g->p) {
+        err = cudaFree(g->p);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->v) {
+        err = cudaFree(g->v);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->a) {
+        err = cudaFree(g->a);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
     memset(g, 0, sizeof(*g));
+    return first;
 }
 
-static void nbody_gpu_init(NbodyGpu *g, int n) {
-    assert(g && n >= 0 && g->p == 0 && g->stream == 0);
-    memset(g, 0, sizeof(*g));
+static cudaError_t nbody_gpu_init(NbodyGpu *g, int n) {
+    cudaError_t err;
+    if (!g || n < 0) {
+        return cudaErrorInvalidValue;
+    }
+    /* Re-init of a live handle must release previous buffers. A zeroed
+     * handle is a no-op (no driver). First-use callers zero the struct. */
+    nbody_gpu_free(g);
     g->n = n;
     if (n == 0) {
-        return;
+        return cudaSuccess;
     }
-    nbody_cuda(cudaStreamCreateWithFlags(&g->stream, cudaStreamNonBlocking));
-    nbody_cuda(cudaMalloc((void **)&g->p, (size_t)n * sizeof(*g->p)));
-    nbody_cuda(cudaMalloc((void **)&g->v, (size_t)n * sizeof(*g->v)));
-    nbody_cuda(cudaMalloc((void **)&g->a, (size_t)n * sizeof(*g->a)));
+    err = cudaStreamCreateWithFlags(&g->stream, cudaStreamNonBlocking);
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void **)&g->p, (size_t)n * sizeof(*g->p));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void **)&g->v, (size_t)n * sizeof(*g->v));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void **)&g->a, (size_t)n * sizeof(*g->a));
+    }
+    if (err != cudaSuccess) {
+        nbody_gpu_free(g);
+        return err;
+    }
+    return cudaSuccess;
 }
 
-static void nbody_gpu_upload(NbodyGpu *g, NbodyPoint *p, NbodyVec *v) {
-    assert(g);
+static cudaError_t nbody_gpu_upload(NbodyGpu *g, NbodyPoint *p, NbodyVec *v) {
+    cudaError_t err;
+    if (!g) {
+        return cudaErrorInvalidValue;
+    }
     g->acceleration_valid = 0;
     if (g->n == 0) {
-        return;
+        return cudaSuccess;
     }
-    assert(p && v);
-    nbody_cuda(cudaMemcpyAsync(g->p, p, (size_t)g->n * sizeof(*p),
-        cudaMemcpyHostToDevice, g->stream));
-    nbody_cuda(cudaMemcpyAsync(g->v, v, (size_t)g->n * sizeof(*v),
-        cudaMemcpyHostToDevice, g->stream));
+    if (!p || !v) {
+        return cudaErrorInvalidValue;
+    }
+    err = cudaMemcpyAsync(g->p, p, (size_t)g->n * sizeof(*p),
+        cudaMemcpyHostToDevice, g->stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
+    return cudaMemcpyAsync(g->v, v, (size_t)g->n * sizeof(*v),
+        cudaMemcpyHostToDevice, g->stream);
 }
 
-static void nbody_gpu_download(NbodyGpu *g, NbodyPoint *p, NbodyVec *v) {
-    assert(g);
+static cudaError_t nbody_gpu_download(NbodyGpu *g, NbodyPoint *p, NbodyVec *v) {
+    cudaError_t err;
+    if (!g) {
+        return cudaErrorInvalidValue;
+    }
     if (g->n == 0) {
-        return;
+        return cudaSuccess;
     }
-    assert(p && v);
-    nbody_cuda(cudaMemcpyAsync(p, g->p, (size_t)g->n * sizeof(*p),
-        cudaMemcpyDeviceToHost, g->stream));
-    nbody_cuda(cudaMemcpyAsync(v, g->v, (size_t)g->n * sizeof(*v),
-        cudaMemcpyDeviceToHost, g->stream));
-    nbody_cuda(cudaStreamSynchronize(g->stream));
+    if (!p || !v) {
+        return cudaErrorInvalidValue;
+    }
+    err = cudaMemcpyAsync(p, g->p, (size_t)g->n * sizeof(*p),
+        cudaMemcpyDeviceToHost, g->stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
+    err = cudaMemcpyAsync(v, g->v, (size_t)g->n * sizeof(*v),
+        cudaMemcpyDeviceToHost, g->stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
+    return cudaStreamSynchronize(g->stream);
 }
 
-static void nbody_gpu_step(NbodyGpu *g, float dt, int steps,
+static cudaError_t nbody_gpu_step(NbodyGpu *g, float dt, int steps,
         NbodyConfig cfg) {
     unsigned blocks;
     int step;
-    assert(g && steps >= 0 && nbody_cfg_ok(cfg));
+    cudaError_t err;
+    if (!g || steps < 0 || !nbody_cfg_ok(cfg)) {
+        return cudaErrorInvalidValue;
+    }
     if (g->n == 0 || steps == 0 || dt == 0) {
-        return;
+        return cudaSuccess;
     }
     blocks = ((unsigned)g->n + NBODY_TILE - 1) / NBODY_TILE;
     if (!g->acceleration_valid
@@ -279,19 +356,38 @@ static void nbody_gpu_step(NbodyGpu *g, float dt, int steps,
             || cfg.softening != g->cached_config.softening) {
         nbody_acceleration_kernel<<<blocks, NBODY_TILE, 0, g->stream>>>(
             g->p, g->a, g->n, cfg);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
     }
     for (step = 0; step < steps; step++) {
         nbody_kick_kernel<<<blocks, NBODY_TILE, 0, g->stream>>>(
             g->p, g->v, g->a, g->n, dt, 1);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
         nbody_acceleration_kernel<<<blocks, NBODY_TILE, 0, g->stream>>>(
             g->p, g->a, g->n, cfg);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
         nbody_kick_kernel<<<blocks, NBODY_TILE, 0, g->stream>>>(
             g->p, g->v, g->a, g->n, dt, 0);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
     }
-    nbody_cuda(cudaGetLastError());
-    nbody_cuda(cudaStreamSynchronize(g->stream));
+    err = cudaStreamSynchronize(g->stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
     g->acceleration_valid = 1;
     g->cached_config = cfg;
+    return cudaSuccess;
 }
 #endif
 #endif

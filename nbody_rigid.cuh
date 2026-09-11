@@ -12,14 +12,16 @@
 #include "nbody.cuh"
 
 /* Optional gravitational_mass is body_count charges. */
-static B3_HD B3_INL void b3_nbody_masses(B3World *w, NbodyConfig cfg,
+B3_HD B3_INL void b3_nbody_masses(B3World *w, NbodyConfig cfg,
         float *gravitational_mass, float *masses) {
     int i;
     B3Body *b;
     float mass;
+    if (!w || !masses || !nbody_cfg_ok(cfg)
+            || w->body_count < 0 || w->body_count > B3_MAX_BODIES) {
+        return;
+    }
     assert(w && masses);
-    assert(w->body_count >= 0 && w->body_count <= B3_MAX_BODIES);
-    assert(nbody_cfg_ok(cfg));
     for (i = 0; i < w->body_count; i++) {
         b = &w->bodies[i];
         mass = gravitational_mass ? gravitational_mass[i]
@@ -30,7 +32,7 @@ static B3_HD B3_INL void b3_nbody_masses(B3World *w, NbodyConfig cfg,
     }
 }
 
-static B3_HD B3_INL void b3_nbody_accumulate(B3World *w, NbodyConfig cfg,
+B3_HD B3_INL void b3_nbody_accumulate(B3World *w, NbodyConfig cfg,
         float *masses) {
     int i, j;
     float eps2, q, inv;
@@ -63,7 +65,7 @@ static B3_HD B3_INL void b3_nbody_accumulate(B3World *w, NbodyConfig cfg,
     }
 }
 
-static B3_HD B3_INL void b3_nbody_apply_forces(B3World *w, NbodyConfig cfg,
+B3_HD B3_INL void b3_nbody_apply_forces(B3World *w, NbodyConfig cfg,
         float *gravitational_mass) {
     float masses[B3_MAX_BODIES];
     b3_nbody_masses(w, cfg, gravitational_mass, masses);
@@ -73,12 +75,15 @@ static B3_HD B3_INL void b3_nbody_apply_forces(B3World *w, NbodyConfig cfg,
 /* Rebuild gravity each substep. Incoming force/torque held over dt.
  * Do not also put this law in B3_USER_FORCES.
  */
-static B3_HD B3_INL void b3_nbody_step(B3World *w, float dt, int substeps,
+B3_HD B3_INL void b3_nbody_step(B3World *w, float dt, int substeps,
         NbodyConfig cfg, float *gravitational_mass) {
     float masses[B3_MAX_BODIES];
     B3Vec3 force[B3_MAX_BODIES], torque[B3_MAX_BODIES];
     int count, s, i;
     float h;
+    if (!w || dt < 0 || !nbody_cfg_ok(cfg)) {
+        return;
+    }
     assert(dt >= 0);
     b3_nbody_masses(w, cfg, gravitational_mass, masses);
     if (dt == 0) {

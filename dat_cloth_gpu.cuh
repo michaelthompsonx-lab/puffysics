@@ -44,20 +44,13 @@ struct DatGpuBatch {
     cudaStream_t stream;
 };
 
-static inline void dat_gpu_check(cudaError_t err, const char* operation) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "fabric CUDA %s: %s\n", operation,
-            cudaGetErrorString(err));
-        abort();
-    }
-}
+// Fallible entry points return cudaError_t (cudaSuccess == 0). The library
+// prints nothing and never aborts; viewers check with FAB_CUDA-style macros.
+#define DAT_GPU_TRY(call) do { cudaError_t dat_gpu_err__ = (call); \
+    if (dat_gpu_err__ != cudaSuccess) return dat_gpu_err__; } while (0)
 
-static inline void dat_gpu_require(int ok, const char* message) {
-    if (!ok) {
-        fprintf(stderr, "fabric CUDA: %s\n", message);
-        abort();
-    }
-}
+static inline int dat_gpu_valid(const DatCloth* c, const B3World* w,
+        const int* bodies, const float* radii, int nb);
 
 struct DatGpuContact {
     int a, b, c;
@@ -643,35 +636,50 @@ static __global__ void dat_gpu_centers_kernel(const B3World* world,
     if (q < nb) centers[q] = world->bodies[bodies[q]].center;
 }
 
-static inline void dat_gpu_validate(const DatCloth* c, const B3World* w,
+static inline int dat_gpu_valid(const DatCloth* c, const B3World* w,
         const int* bodies, const float* radii, int nb) {
-    dat_gpu_require(c && w && c->W >= 2 && c->H >= 2 &&
-        c->W <= DAT_GPU_MAX_NODES && c->H <= DAT_GPU_MAX_NODES &&
-        c->n == c->W * c->H && c->n <= DAT_GPU_MAX_NODES,
-        "sheet must have 2..1024 nodes per dimension and at most 1024 total nodes");
-    dat_gpu_require(c->pos && c->vel && c->snap && c->pinned,
-        "host cloth arrays must be allocated");
-    dat_gpu_require(isfinite(c->spacing) && c->spacing > 0 &&
-        isfinite(c->node_mass) && c->node_mass > 0 && isfinite(c->gravity) &&
-        isfinite(c->damping) && c->damping >= 0 && c->damping < 1 &&
-        isfinite(c->relax) && c->relax > 0 && c->relax <= 1 &&
-        isfinite(c->gamma) && c->gamma >= 0 && c->gamma <= 1 &&
-        isfinite(c->restitution) && c->restitution >= 0 && c->restitution <= 1 &&
-        isfinite(c->compliance) && c->compliance >= 0,
-        "invalid membrane mass, spacing, relaxation, damping, or restitution");
-    dat_gpu_require(nb >= 0 && nb <= DAT_GPU_MAX_BALLS &&
-        (!nb || (bodies && radii)), "expected zero to eight sphere bindings");
-    dat_gpu_require(w->body_count >= 0 && w->body_count <= B3_MAX_BODIES &&
-        w->shape_count >= 0 && w->shape_count <= B3_MAX_SHAPES,
-        "invalid rigid world capacity");
-    for (int q = 0; q < nb; q++) {
-        dat_gpu_require(bodies[q] >= 0 && bodies[q] < w->body_count &&
-            isfinite(radii[q]) && radii[q] > 0, "invalid sphere binding");
-        dat_gpu_require(w->bodies[bodies[q]].type == B3_DYNAMIC &&
-            w->bodies[bodies[q]].inv_mass > 0, "coupled spheres must be dynamic");
-        for (int j = 0; j < q; j++)
-            dat_gpu_require(bodies[j] != bodies[q], "duplicate sphere binding");
+    if (!(c && w && c->W >= 2 && c->H >= 2
+            && c->W <= DAT_GPU_MAX_NODES && c->H <= DAT_GPU_MAX_NODES
+            && c->n == c->W * c->H && c->n <= DAT_GPU_MAX_NODES)) {
+        return 0;
     }
+    if (!(c->pos && c->vel && c->snap && c->pinned)) {
+        return 0;
+    }
+    if (!(isfinite(c->spacing) && c->spacing > 0
+            && isfinite(c->node_mass) && c->node_mass > 0
+            && isfinite(c->gravity) && isfinite(c->damping)
+            && c->damping >= 0 && c->damping < 1 && isfinite(c->relax)
+            && c->relax > 0 && c->relax <= 1 && isfinite(c->gamma)
+            && c->gamma >= 0 && c->gamma <= 1 && isfinite(c->restitution)
+            && c->restitution >= 0 && c->restitution <= 1
+            && isfinite(c->compliance) && c->compliance >= 0)) {
+        return 0;
+    }
+    if (!(nb >= 0 && nb <= DAT_GPU_MAX_BALLS && (!nb || (bodies && radii)))) {
+        return 0;
+    }
+    if (!(w->body_count >= 0 && w->body_count <= B3_MAX_BODIES
+            && w->shape_count >= 0
+            && w->shape_count <= B3_MAX_SHAPES)) {
+        return 0;
+    }
+    for (int q = 0; q < nb; q++) {
+        if (!(bodies[q] >= 0 && bodies[q] < w->body_count
+                && isfinite(radii[q]) && radii[q] > 0)) {
+            return 0;
+        }
+        if (!(w->bodies[bodies[q]].type == B3_DYNAMIC
+                && w->bodies[bodies[q]].inv_mass > 0)) {
+            return 0;
+        }
+        for (int j = 0; j < q; j++) {
+            if (bodies[j] == bodies[q]) {
+                return 0;
+            }
+        }
+    }
+    return 1;
 }
 
 static inline DatGpuLaunch dat_gpu_pack(const DatGpu* g) {
@@ -684,61 +692,134 @@ static inline DatGpuLaunch dat_gpu_pack(const DatGpu* g) {
     return launch;
 }
 
-static inline void dat_gpu_refresh_launch(DatGpu* g) {
+static inline cudaError_t dat_gpu_refresh_launch(DatGpu* g) {
     DatGpuLaunch launch = dat_gpu_pack(g);
-    dat_gpu_check(cudaMemcpyAsync(g->launch, &launch, sizeof(launch),
-        cudaMemcpyHostToDevice, g->stream), "refreshing launch record");
+    DAT_GPU_TRY(cudaMemcpyAsync(g->launch, &launch, sizeof(launch),
+        cudaMemcpyHostToDevice, g->stream));
+    return cudaSuccess;
 }
 
 static inline int dat_gpu_substeps(float dt, int substeps) {
-    dat_gpu_require(isfinite(dt), "nonfinite timestep");
-    if (dt <= 0) return 0;
+    if (!isfinite(dt)) {
+        return 0;
+    }
+    if (dt <= 0) {
+        return 0;
+    }
     float required = ceilf(dt / (1.0f / 240.0f));
-    dat_gpu_require(required < 2147483648.0f, "timestep exceeds substep capacity");
+    if (!(required < 2147483648.0f)) {
+        return 0;
+    }
     int count = (int)required;
-    if (substeps > count) count = substeps;
+    if (substeps > count) {
+        count = substeps;
+    }
     return count;
 }
 
-static inline void dat_gpu_occupancy(int threads, int* blocks_per_sm, int* sm_count) {
-    dat_gpu_require(threads > 0 && (threads % 32) == 0, "occupancy thread count");
+static inline cudaError_t dat_gpu_occupancy(int threads, int* blocks_per_sm,
+        int* sm_count) {
+    if (!(threads > 0 && (threads % 32) == 0)) {
+        return cudaErrorInvalidValue;
+    }
     int sms = 0;
-    dat_gpu_check(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0),
-        "querying SM count");
+    DAT_GPU_TRY(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount,
+        0));
     int blocks = 0;
-    dat_gpu_check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &blocks, dat_gpu_step_kernel, threads, 0), "querying kernel occupancy");
-    if (blocks_per_sm) *blocks_per_sm = blocks;
-    if (sm_count) *sm_count = sms;
+    DAT_GPU_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks,
+        dat_gpu_step_kernel, threads, 0));
+    if (blocks_per_sm) {
+        *blocks_per_sm = blocks;
+    }
+    if (sm_count) {
+        *sm_count = sms;
+    }
+    return cudaSuccess;
 }
 
-static inline void dat_gpu_free(DatGpu* g) {
-    if (!g) return;
-    dat_gpu_check(cudaStreamSynchronize(g->stream), "synchronizing before free");
-    dat_gpu_check(cudaFree(g->cloth.pos), "freeing positions");
-    dat_gpu_check(cudaFree(g->cloth.vel), "freeing velocities");
-    dat_gpu_check(cudaFree(g->cloth.snap), "freeing snapshots");
-    dat_gpu_check(cudaFree(g->cloth.pinned), "freeing pins");
-    dat_gpu_check(cudaFree(g->world), "freeing rigid world");
-    dat_gpu_check(cudaFree(g->body_ids), "freeing sphere bindings");
-    dat_gpu_check(cudaFree(g->radii), "freeing radii");
-    dat_gpu_check(cudaFree(g->centers), "freeing center staging");
-    dat_gpu_check(cudaFree(g->launch), "freeing launch record");
+static inline cudaError_t dat_gpu_free(DatGpu* g) {
+    cudaError_t err, first = cudaSuccess;
+    if (!g) {
+        return cudaErrorInvalidValue;
+    }
+    if (g->stream) {
+        err = cudaStreamSynchronize(g->stream);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->cloth.pos) {
+        err = cudaFree(g->cloth.pos);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->cloth.vel) {
+        err = cudaFree(g->cloth.vel);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->cloth.snap) {
+        err = cudaFree(g->cloth.snap);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->cloth.pinned) {
+        err = cudaFree(g->cloth.pinned);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->world) {
+        err = cudaFree(g->world);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->body_ids) {
+        err = cudaFree(g->body_ids);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->radii) {
+        err = cudaFree(g->radii);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->centers) {
+        err = cudaFree(g->centers);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (g->launch) {
+        err = cudaFree(g->launch);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
     memset(g, 0, sizeof(*g));
+    return first;
 }
 
-static inline void dat_gpu_init(DatGpu* g, const DatCloth* c,
+static inline cudaError_t dat_gpu_init(DatGpu* g, const DatCloth* c,
         const B3World* w, const int* bodies, const float* radii, int nb,
         cudaStream_t stream);
 
-static inline void dat_gpu_reset(DatGpu* g, const DatCloth* c,
+static inline cudaError_t dat_gpu_reset(DatGpu* g, const DatCloth* c,
         const B3World* w, const int* bodies, const float* radii, int nb) {
-    dat_gpu_validate(c, w, bodies, radii, nb);
+    if (!g || !dat_gpu_valid(c, w, bodies, radii, nb)) {
+        return cudaErrorInvalidValue;
+    }
     if (g->cloth.n != c->n) {
         cudaStream_t stream = g->stream;
-        dat_gpu_free(g);
-        dat_gpu_init(g, c, w, bodies, radii, nb, stream);
-        return;
+        DAT_GPU_TRY(dat_gpu_free(g));
+        DAT_GPU_TRY(dat_gpu_init(g, c, w, bodies, radii, nb, stream));
+        return cudaSuccess;
     }
     DatCloth device = *c;
     device.pos = g->cloth.pos;
@@ -750,139 +831,232 @@ static inline void dat_gpu_reset(DatGpu* g, const DatCloth* c,
     g->body_count = w->body_count;
     g->shape_count = w->shape_count;
     size_t bytes = (size_t)c->n * sizeof(B3Vec3);
-    dat_gpu_check(cudaMemcpyAsync(device.pos, c->pos, bytes,
-        cudaMemcpyHostToDevice, g->stream), "uploading positions");
-    dat_gpu_check(cudaMemcpyAsync(device.vel, c->vel, bytes,
-        cudaMemcpyHostToDevice, g->stream), "uploading velocities");
-    dat_gpu_check(cudaMemcpyAsync(device.snap, c->snap, bytes,
-        cudaMemcpyHostToDevice, g->stream), "uploading snapshots");
-    dat_gpu_check(cudaMemcpyAsync(device.pinned, c->pinned, (size_t)c->n,
-        cudaMemcpyHostToDevice, g->stream), "uploading pins");
-    dat_gpu_check(cudaMemcpyAsync(g->world, w, sizeof(*w),
-        cudaMemcpyHostToDevice, g->stream), "uploading rigid world");
+    DAT_GPU_TRY(cudaMemcpyAsync(device.pos, c->pos, bytes,
+        cudaMemcpyHostToDevice, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(device.vel, c->vel, bytes,
+        cudaMemcpyHostToDevice, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(device.snap, c->snap, bytes,
+        cudaMemcpyHostToDevice, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(device.pinned, c->pinned, (size_t)c->n,
+        cudaMemcpyHostToDevice, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(g->world, w, sizeof(*w),
+        cudaMemcpyHostToDevice, g->stream));
     if (nb) {
-        dat_gpu_check(cudaMemcpyAsync(g->body_ids, bodies, (size_t)nb * sizeof(int),
-            cudaMemcpyHostToDevice, g->stream), "uploading sphere bindings");
-        dat_gpu_check(cudaMemcpyAsync(g->radii, radii, (size_t)nb * sizeof(float),
-            cudaMemcpyHostToDevice, g->stream), "uploading radii");
+        DAT_GPU_TRY(cudaMemcpyAsync(g->body_ids, bodies,
+            (size_t)nb * sizeof(int), cudaMemcpyHostToDevice, g->stream));
+        DAT_GPU_TRY(cudaMemcpyAsync(g->radii, radii,
+            (size_t)nb * sizeof(float), cudaMemcpyHostToDevice, g->stream));
     }
-    dat_gpu_refresh_launch(g);
-    dat_gpu_check(cudaStreamSynchronize(g->stream), "finishing reset");
+    DAT_GPU_TRY(dat_gpu_refresh_launch(g));
+    DAT_GPU_TRY(cudaStreamSynchronize(g->stream));
+    return cudaSuccess;
 }
 
-static inline void dat_gpu_init(DatGpu* g, const DatCloth* c,
+static inline cudaError_t dat_gpu_init(DatGpu* g, const DatCloth* c,
         const B3World* w, const int* bodies, const float* radii, int nb,
         cudaStream_t stream) {
-    dat_gpu_validate(c, w, bodies, radii, nb);
-    memset(g, 0, sizeof(*g));
+    cudaError_t err;
+    if (!g || !dat_gpu_valid(c, w, bodies, radii, nb)) {
+        return cudaErrorInvalidValue;
+    }
+    /* Re-init of a live handle must release previous buffers. A zeroed
+     * handle is a no-op (no driver). First-use callers zero the struct. */
+    dat_gpu_free(g);
     g->stream = stream;
     g->cloth.n = c->n;
     size_t bytes = (size_t)c->n * sizeof(B3Vec3);
-    dat_gpu_check(cudaMalloc((void**)&g->cloth.pos, bytes), "allocating positions");
-    dat_gpu_check(cudaMalloc((void**)&g->cloth.vel, bytes), "allocating velocities");
-    dat_gpu_check(cudaMalloc((void**)&g->cloth.snap, bytes), "allocating snapshots");
-    dat_gpu_check(cudaMalloc((void**)&g->cloth.pinned, (size_t)c->n), "allocating pins");
-    dat_gpu_check(cudaMalloc((void**)&g->world, sizeof(B3World)), "allocating rigid world");
-    dat_gpu_check(cudaMalloc((void**)&g->body_ids, DAT_GPU_MAX_BALLS * sizeof(int)), "allocating bindings");
-    dat_gpu_check(cudaMalloc((void**)&g->radii, DAT_GPU_MAX_BALLS * sizeof(float)), "allocating radii");
-    dat_gpu_check(cudaMalloc((void**)&g->centers, DAT_GPU_MAX_BALLS * sizeof(B3Vec3)), "allocating staging");
-    dat_gpu_check(cudaMalloc((void**)&g->launch, sizeof(DatGpuLaunch)), "allocating launch record");
-    dat_gpu_reset(g, c, w, bodies, radii, nb);
+    err = cudaMalloc((void**)&g->cloth.pos, bytes);
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->cloth.vel, bytes);
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->cloth.snap, bytes);
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->cloth.pinned, (size_t)c->n);
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->world, sizeof(B3World));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->body_ids,
+            DAT_GPU_MAX_BALLS * sizeof(int));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->radii,
+            DAT_GPU_MAX_BALLS * sizeof(float));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->centers,
+            DAT_GPU_MAX_BALLS * sizeof(B3Vec3));
+    }
+    if (err == cudaSuccess) {
+        err = cudaMalloc((void**)&g->launch, sizeof(DatGpuLaunch));
+    }
+    if (err != cudaSuccess) {
+        dat_gpu_free(g);
+        return err;
+    }
+    return dat_gpu_reset(g, c, w, bodies, radii, nb);
 }
 
-static inline void dat_gpu_step_launch(DatGpu* g, float dt, int substeps, int threads) {
+static inline cudaError_t dat_gpu_step_launch(DatGpu* g, float dt,
+        int substeps, int threads) {
     int count = dat_gpu_substeps(dt, substeps);
-    if (!count) return;
-    dat_gpu_require(threads > 0 && (threads % 32) == 0 &&
-        threads <= DAT_GPU_VIEWER_THREADS, "invalid step thread count");
-    dat_gpu_step_kernel<<<1, threads, 0, g->stream>>>(g->launch, 1, dt / count, count);
-    dat_gpu_check(cudaGetLastError(), "launching coupled step");
+    if (!count) {
+        return cudaSuccess;
+    }
+    if (!g || threads <= 0 || (threads % 32) != 0
+            || threads > DAT_GPU_VIEWER_THREADS) {
+        return cudaErrorInvalidValue;
+    }
+    dat_gpu_step_kernel<<<1, threads, 0, g->stream>>>(g->launch, 1,
+        dt / count, count);
+    return cudaGetLastError();
 }
 
-static inline void dat_gpu_step(DatGpu* g, float dt, int substeps) {
-    dat_gpu_step_launch(g, dt, substeps, DAT_GPU_VIEWER_THREADS);
+static inline cudaError_t dat_gpu_step(DatGpu* g, float dt, int substeps) {
+    return dat_gpu_step_launch(g, dt, substeps, DAT_GPU_VIEWER_THREADS);
 }
 
-static inline void dat_gpu_batch_free(DatGpuBatch* b) {
-    if (!b) return;
-    dat_gpu_check(cudaStreamSynchronize(b->stream), "synchronizing batch before free");
-    dat_gpu_check(cudaFree(b->device), "freeing batch launches");
+static inline cudaError_t dat_gpu_batch_free(DatGpuBatch* b) {
+    cudaError_t err, first = cudaSuccess;
+    if (!b) {
+        return cudaErrorInvalidValue;
+    }
+    if (b->stream) {
+        err = cudaStreamSynchronize(b->stream);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
+    if (b->device) {
+        err = cudaFree(b->device);
+        if (err != cudaSuccess && first == cudaSuccess) {
+            first = err;
+        }
+    }
     memset(b, 0, sizeof(*b));
+    return first;
 }
 
-static inline void dat_gpu_batch_bind(DatGpuBatch* b, DatGpu* gs, int n,
-        cudaStream_t stream) {
-    dat_gpu_require(b && gs && n > 0, "batch bind requires worlds");
-    if (b->device && b->n != n) dat_gpu_batch_free(b);
+static inline cudaError_t dat_gpu_batch_bind(DatGpuBatch* b, DatGpu* gs,
+        int n, cudaStream_t stream) {
+    cudaError_t err;
+    if (!b || !gs || n <= 0) {
+        return cudaErrorInvalidValue;
+    }
+    if (b->device && b->n != n) {
+        DAT_GPU_TRY(dat_gpu_batch_free(b));
+    }
     if (!b->device) {
-        dat_gpu_check(cudaMalloc((void**)&b->device, (size_t)n * sizeof(DatGpuLaunch)),
-            "allocating batch launches");
+        DAT_GPU_TRY(cudaMalloc((void**)&b->device,
+            (size_t)n * sizeof(DatGpuLaunch)));
     }
     b->n = n;
     b->stream = stream;
-    DatGpuLaunch* host = (DatGpuLaunch*)malloc((size_t)n * sizeof(DatGpuLaunch));
-    dat_gpu_require(host != NULL, "host batch launch alloc");
-    for (int i = 0; i < n; i++) host[i] = dat_gpu_pack(&gs[i]);
-    dat_gpu_check(cudaMemcpyAsync(b->device, host, (size_t)n * sizeof(DatGpuLaunch),
-        cudaMemcpyHostToDevice, stream), "uploading batch launches");
-    dat_gpu_check(cudaStreamSynchronize(stream), "binding batch");
+    DatGpuLaunch* host =
+        (DatGpuLaunch*)malloc((size_t)n * sizeof(DatGpuLaunch));
+    if (!host) {
+        dat_gpu_batch_free(b);
+        return cudaErrorInvalidValue;
+    }
+    for (int i = 0; i < n; i++) {
+        host[i] = dat_gpu_pack(&gs[i]);
+    }
+    err = cudaMemcpyAsync(b->device, host, (size_t)n * sizeof(DatGpuLaunch),
+        cudaMemcpyHostToDevice, stream);
+    if (err == cudaSuccess) {
+        err = cudaStreamSynchronize(stream);
+    }
     free(host);
+    if (err != cudaSuccess) {
+        dat_gpu_batch_free(b);
+        return err;
+    }
+    return cudaSuccess;
 }
 
-static inline void dat_gpu_batch_step(DatGpuBatch* b, float dt, int substeps) {
-    dat_gpu_require(b && b->device && b->n > 0, "batch step requires a bound batch");
+static inline cudaError_t dat_gpu_batch_step(DatGpuBatch* b, float dt,
+        int substeps) {
+    if (!b || !b->device || b->n <= 0) {
+        return cudaErrorInvalidValue;
+    }
     int count = dat_gpu_substeps(dt, substeps);
-    if (!count) return;
+    if (!count) {
+        return cudaSuccess;
+    }
     dat_gpu_step_kernel<<<b->n, DAT_GPU_BATCH_THREADS, 0, b->stream>>>(
         b->device, b->n, dt / count, count);
-    dat_gpu_check(cudaGetLastError(), "launching coupled batch step");
+    return cudaGetLastError();
 }
 
-static inline void dat_gpu_spawn_planet(DatGpu* g, int planet_index) {
-    if (g->nb >= DAT_GPU_MAX_BALLS) return;
-    dat_gpu_require(planet_index >= 0, "negative planet index");
-    dat_gpu_require(g->body_count < B3_MAX_BODIES && g->shape_count < B3_MAX_SHAPES,
-        "rigid world has no capacity for another sphere");
+static inline cudaError_t dat_gpu_spawn_planet(DatGpu* g, int planet_index) {
+    if (!g) {
+        return cudaErrorInvalidValue;
+    }
+    if (g->nb >= DAT_GPU_MAX_BALLS) {
+        return cudaSuccess;
+    }
+    if (planet_index < 0
+            || g->body_count >= B3_MAX_BODIES
+            || g->shape_count >= B3_MAX_SHAPES) {
+        return cudaErrorInvalidValue;
+    }
     dat_gpu_spawn_kernel<<<1, 1, 0, g->stream>>>(g->cloth, g->world,
         g->body_ids, g->radii, g->nb, planet_index);
-    dat_gpu_check(cudaGetLastError(), "launching planet spawn");
+    DAT_GPU_TRY(cudaGetLastError());
     g->nb++;
     g->body_count++;
     g->shape_count++;
-    dat_gpu_refresh_launch(g);
+    return dat_gpu_refresh_launch(g);
 }
 
-static inline void dat_gpu_read_balls(DatGpu* g, B3Vec3* host_positions) {
-    if (g->nb) {
-        dat_gpu_require(host_positions != NULL, "missing host center array");
-        dat_gpu_centers_kernel<<<1, 32, 0, g->stream>>>(g->world, g->body_ids,
-            g->centers, g->nb);
-        dat_gpu_check(cudaGetLastError(), "launching center gather");
-        dat_gpu_check(cudaMemcpyAsync(host_positions, g->centers,
-            (size_t)g->nb * sizeof(B3Vec3), cudaMemcpyDeviceToHost, g->stream),
-            "reading sphere centers");
+static inline cudaError_t dat_gpu_read_balls(DatGpu* g,
+        B3Vec3* host_positions) {
+    if (!g) {
+        return cudaErrorInvalidValue;
     }
-    dat_gpu_check(cudaStreamSynchronize(g->stream), "finishing center readback");
+    if (g->nb) {
+        if (!host_positions) {
+            return cudaErrorInvalidValue;
+        }
+        dat_gpu_centers_kernel<<<1, 32, 0, g->stream>>>(g->world,
+            g->body_ids, g->centers, g->nb);
+        DAT_GPU_TRY(cudaGetLastError());
+        DAT_GPU_TRY(cudaMemcpyAsync(host_positions, g->centers,
+            (size_t)g->nb * sizeof(B3Vec3), cudaMemcpyDeviceToHost,
+            g->stream));
+    }
+    DAT_GPU_TRY(cudaStreamSynchronize(g->stream));
+    return cudaSuccess;
 }
 
-static inline void dat_gpu_download(DatGpu* g, DatCloth* c, B3World* w) {
-    dat_gpu_require(c && w && c->n == g->cloth.n && c->pos && c->vel &&
-        c->snap && c->pinned, "download requires matching allocated host state");
+static inline cudaError_t dat_gpu_download(DatGpu* g, DatCloth* c,
+        B3World* w) {
+    if (!g || !c || !w || c->n != g->cloth.n || !c->pos || !c->vel
+            || !c->snap || !c->pinned) {
+        return cudaErrorInvalidValue;
+    }
     DatCloth host = g->cloth;
-    host.pos = c->pos; host.vel = c->vel; host.snap = c->snap; host.pinned = c->pinned;
+    host.pos = c->pos;
+    host.vel = c->vel;
+    host.snap = c->snap;
+    host.pinned = c->pinned;
     *c = host;
     size_t bytes = (size_t)c->n * sizeof(B3Vec3);
-    dat_gpu_check(cudaMemcpyAsync(c->pos, g->cloth.pos, bytes,
-        cudaMemcpyDeviceToHost, g->stream), "downloading positions");
-    dat_gpu_check(cudaMemcpyAsync(c->vel, g->cloth.vel, bytes,
-        cudaMemcpyDeviceToHost, g->stream), "downloading velocities");
-    dat_gpu_check(cudaMemcpyAsync(c->snap, g->cloth.snap, bytes,
-        cudaMemcpyDeviceToHost, g->stream), "downloading snapshots");
-    dat_gpu_check(cudaMemcpyAsync(c->pinned, g->cloth.pinned, (size_t)c->n,
-        cudaMemcpyDeviceToHost, g->stream), "downloading pins");
-    dat_gpu_check(cudaMemcpyAsync(w, g->world, sizeof(*w),
-        cudaMemcpyDeviceToHost, g->stream), "downloading rigid world");
-    dat_gpu_check(cudaStreamSynchronize(g->stream), "finishing verification download");
+    DAT_GPU_TRY(cudaMemcpyAsync(c->pos, g->cloth.pos, bytes,
+        cudaMemcpyDeviceToHost, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(c->vel, g->cloth.vel, bytes,
+        cudaMemcpyDeviceToHost, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(c->snap, g->cloth.snap, bytes,
+        cudaMemcpyDeviceToHost, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(c->pinned, g->cloth.pinned, (size_t)c->n,
+        cudaMemcpyDeviceToHost, g->stream));
+    DAT_GPU_TRY(cudaMemcpyAsync(w, g->world, sizeof(*w),
+        cudaMemcpyDeviceToHost, g->stream));
+    DAT_GPU_TRY(cudaStreamSynchronize(g->stream));
+    return cudaSuccess;
 }
 
 #endif

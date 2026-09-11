@@ -1,5 +1,6 @@
 // Binary + ASCII STL loader. Raylib has no STL reader.
 // Host-only. Optional Raylib Mesh upload when raylib.h is included first.
+// Reload frees the previous buffers. Pass a zeroed or already-loaded mesh.
 #pragma once
 
 #include <stdint.h>
@@ -21,14 +22,22 @@ typedef struct StlMesh {
 } StlMesh;
 
 static inline void stl_free(StlMesh* m) {
+    if (!m) {
+        return;
+    }
     free(m->positions);
     free(m->normals);
     m->positions = 0;
     m->normals = 0;
     m->tri_count = 0;
+    m->min[0] = m->min[1] = m->min[2] = 1.0e30f;
+    m->max[0] = m->max[1] = m->max[2] = -1.0e30f;
 }
 
 static inline void stl_grow_aabb(StlMesh* m, float x, float y, float z) {
+    if (!m) {
+        return;
+    }
     if (x < m->min[0]) {
         m->min[0] = x;
     }
@@ -51,7 +60,7 @@ static inline void stl_grow_aabb(StlMesh* m, float x, float y, float z) {
 
 /* MuJoCo Z-up -> engine/Raylib Y-up: (x,y,z) -> (x,z,-y). Same as mjcf_zup_vec. */
 static inline void stl_apply_zup(StlMesh* m) {
-    if (!m->positions || m->tri_count < 1) {
+    if (!m || !m->positions || m->tri_count < 1) {
         return;
     }
     for (int i = 0; i < m->tri_count; i++) {
@@ -89,11 +98,21 @@ static inline float stl_f32le(const unsigned char* p) {
 }
 
 static inline int stl_load_ascii(StlMesh* m, const char* text) {
+    if (!m || !text) {
+        return 0;
+    }
+    stl_free(m);
     int cap = 256;
     int n = 0;
     m->positions = (float*)malloc((size_t)cap * 9 * sizeof(float));
     m->normals = (float*)malloc((size_t)cap * 3 * sizeof(float));
+    m->min[0] = m->min[1] = m->min[2] = 1.0e30f;
+    m->max[0] = m->max[1] = m->max[2] = -1.0e30f;
     if (!m->positions || !m->normals) {
+        free(m->positions);
+        free(m->normals);
+        m->positions = NULL;
+        m->normals = NULL;
         return 0;
     }
     const char* p = text;
@@ -127,8 +146,19 @@ static inline int stl_load_ascii(StlMesh* m, const char* text) {
                 float* nn = (float*)realloc(m->normals,
                     (size_t)cap * 3 * sizeof(float));
                 if (!np || !nn) {
+                    // A successful realloc owns the old block; a failed one
+                    // leaves it. Release whatever this pair owns, then drop
+                    // the mesh so the caller sees an empty safe-to-free mesh
+                    // instead of a dangling pointer.
                     free(np);
                     free(nn);
+                    if (np) {
+                        m->positions = NULL;
+                    }
+                    if (nn) {
+                        m->normals = NULL;
+                    }
+                    stl_free(m);
                     return 0;
                 }
                 m->positions = np;
@@ -152,13 +182,17 @@ static inline int stl_load_ascii(StlMesh* m, const char* text) {
             p++;
         }
     }
+    if (n == 0) {
+        stl_free(m);
+        return 0;
+    }
     m->tri_count = n;
-    return n > 0;
+    return 1;
 }
 
 static inline int stl_load_binary(StlMesh* m, const unsigned char* buf,
         size_t n) {
-    if (n < 84) {
+    if (!m || !buf || n < 84) {
         return 0;
     }
     uint32_t tri = stl_u32le(buf + 80);
@@ -168,9 +202,16 @@ static inline int stl_load_binary(StlMesh* m, const unsigned char* buf,
     if (tri == 0 || tri > 20000000u) {
         return 0;
     }
+    stl_free(m);
     m->positions = (float*)malloc((size_t)tri * 9 * sizeof(float));
     m->normals = (float*)malloc((size_t)tri * 3 * sizeof(float));
+    m->min[0] = m->min[1] = m->min[2] = 1.0e30f;
+    m->max[0] = m->max[1] = m->max[2] = -1.0e30f;
     if (!m->positions || !m->normals) {
+        free(m->positions);
+        free(m->normals);
+        m->positions = NULL;
+        m->normals = NULL;
         return 0;
     }
     const unsigned char* p = buf + 84;
@@ -194,9 +235,10 @@ static inline int stl_load_binary(StlMesh* m, const unsigned char* buf,
 }
 
 static inline int stl_load(StlMesh* m, const char* path) {
-    memset(m, 0, sizeof(*m));
-    m->min[0] = m->min[1] = m->min[2] = 1.0e30f;
-    m->max[0] = m->max[1] = m->max[2] = -1.0e30f;
+    if (!m || !path) {
+        return 0;
+    }
+    stl_free(m);
     snprintf(m->path, STL_MAX_PATH, "%s", path);
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -246,7 +288,7 @@ static inline int stl_load(StlMesh* m, const char* path) {
 #ifdef RAYLIB_H
 static inline Mesh stl_to_raylib_mesh(const StlMesh* m) {
     Mesh mesh = { 0 };
-    if (m->tri_count <= 0) {
+    if (!m || m->tri_count <= 0 || !m->positions) {
         return mesh;
     }
     int vc = m->tri_count * 3;
@@ -276,8 +318,9 @@ static inline Mesh stl_to_raylib_mesh(const StlMesh* m) {
 
 static inline Model stl_load_model(const char* path, Color tint) {
     StlMesh stl;
+    memset(&stl, 0, sizeof(stl));
     Model model = { 0 };
-    if (!stl_load(&stl, path)) {
+    if (!path || !stl_load(&stl, path)) {
         return model;
     }
     Mesh mesh = stl_to_raylib_mesh(&stl);

@@ -188,26 +188,80 @@ static inline B3Quat mjcf_quat_wxyz(float w, float x, float y, float z) {
     return b3_qnorm(b3_q(x, y, z, w));
 }
 
+static inline void mjcf_strlcpy(char* out, int n, const char* s) {
+    if (!out || n <= 0) {
+        return;
+    }
+    if (!s) {
+        out[0] = 0;
+        return;
+    }
+    int i = 0;
+    while (s[i] && i + 1 < n) {
+        out[i] = s[i];
+        i++;
+    }
+    out[i] = 0;
+}
+
+static inline void mjcf_set_error(MjcfModel* m, const char* prefix,
+        const char* detail) {
+    if (!m) {
+        return;
+    }
+    mjcf_strlcpy(m->error, (int)sizeof(m->error), prefix);
+    int n = 0;
+    while (m->error[n]) {
+        n++;
+    }
+    mjcf_strlcpy(m->error + n, (int)sizeof(m->error) - n, detail);
+}
+
+static inline void mjcf_overflow(MjcfModel* m, const char* what) {
+    if (m && m->error[0] == 0) {
+        mjcf_set_error(m, "capacity exceeded: ", what);
+    }
+}
+
 static inline void mjcf_dirname(const char* path, char* out, int n) {
-    snprintf(out, (size_t)n, "%s", path);
+    mjcf_strlcpy(out, n, path ? path : ".");
     char* slash = strrchr(out, '/');
     if (slash) {
         *slash = 0;
     } else {
-        snprintf(out, (size_t)n, ".");
+        mjcf_strlcpy(out, n, ".");
     }
 }
 
 static inline void mjcf_join(char* out, int n, const char* a, const char* b) {
+    if (!out || n <= 0) {
+        return;
+    }
+    if (!b) {
+        out[0] = 0;
+        return;
+    }
     if (b[0] == '/' || (b[0] && b[1] == ':')) {
-        snprintf(out, (size_t)n, "%s", b);
+        mjcf_strlcpy(out, n, b);
         return;
     }
-    if (a[0] == 0 || strcmp(a, ".") == 0) {
-        snprintf(out, (size_t)n, "%s", b);
+    if (!a || a[0] == 0 || strcmp(a, ".") == 0) {
+        mjcf_strlcpy(out, n, b);
         return;
     }
-    snprintf(out, (size_t)n, "%s/%s", a, b);
+    int i = 0;
+    while (a[i] && i + 1 < n) {
+        out[i] = a[i];
+        i++;
+    }
+    if (i + 1 < n) {
+        out[i++] = '/';
+    }
+    int j = 0;
+    while (b[j] && i + 1 < n) {
+        out[i++] = b[j++];
+    }
+    out[i] = 0;
 }
 
 static inline char* mjcf_read_file(const char* path) {
@@ -437,16 +491,17 @@ static inline void mjcf_class_init(MjcfClass* c) {
 
 static inline int mjcf_add_class(MjcfModel* m, const char* name, int parent) {
     if (m->class_count >= MJCF_MAX_CLASSES) {
+        mjcf_overflow(m, "classes");
         return -1;
     }
     int id = m->class_count++;
     MjcfClass* c = &m->classes[id];
     mjcf_class_init(c);
-    snprintf(c->name, sizeof(c->name), "%s", name ? name : "");
+    mjcf_strlcpy(c->name, (int)sizeof(c->name), name ? name : "");
     c->parent = parent;
     if (parent >= 0) {
         *c = m->classes[parent];
-        snprintf(c->name, sizeof(c->name), "%s", name ? name : "");
+        mjcf_strlcpy(c->name, (int)sizeof(c->name), name ? name : "");
         c->parent = parent;
     }
     return id;
@@ -482,7 +537,7 @@ static inline void mjcf_apply_class_geom(MjcfGeom* g, const MjcfClass* c) {
         return;
     }
     if (!g->klass[0]) {
-        snprintf(g->klass, sizeof(g->klass), "%s", c->name);
+        mjcf_strlcpy(g->klass, (int)sizeof(g->klass), c->name);
     }
     if (c->has_geom_contype) {
         g->contype = c->geom_contype;
@@ -518,6 +573,7 @@ static inline void mjcf_parse_compiler(MjcfModel* m, const char* tag,
 static inline void mjcf_parse_mesh_asset(MjcfModel* m, const char* tag,
         const char* dir) {
     if (m->mesh_count >= MJCF_MAX_MESHES) {
+        mjcf_overflow(m, "meshes");
         return;
     }
     MjcfMeshAsset* a = &m->meshes[m->mesh_count++];
@@ -530,7 +586,7 @@ static inline void mjcf_parse_mesh_asset(MjcfModel* m, const char* tag,
         if (!a->name[0]) {
             const char* slash = strrchr(file, '/');
             const char* basef = slash ? slash + 1 : file;
-            snprintf(a->name, sizeof(a->name), "%s", basef);
+            mjcf_strlcpy(a->name, (int)sizeof(a->name), basef);
             char* dot = strrchr(a->name, '.');
             if (dot) {
                 *dot = 0;
@@ -541,6 +597,7 @@ static inline void mjcf_parse_mesh_asset(MjcfModel* m, const char* tag,
 
 static inline void mjcf_parse_material(MjcfModel* m, const char* tag) {
     if (m->mat_count >= MJCF_MAX_MATS) {
+        mjcf_overflow(m, "materials");
         return;
     }
     MjcfMaterial* mat = &m->mats[m->mat_count++];
@@ -618,6 +675,7 @@ static inline void mjcf_parse_default_block(MjcfModel* m, const char** pp,
 
 static inline void mjcf_parse_key(MjcfModel* m, const char* tag) {
     if (m->key_count >= MJCF_MAX_KEYS) {
+        mjcf_overflow(m, "keys");
         return;
     }
     MjcfKey* k = &m->keys[m->key_count++];
@@ -632,6 +690,7 @@ static inline void mjcf_parse_key(MjcfModel* m, const char* tag) {
 static inline void mjcf_add_geom(MjcfModel* m, int body, const char* tag,
         const char* klass) {
     if (m->geom_count >= MJCF_MAX_GEOMS) {
+        mjcf_overflow(m, "geoms");
         return;
     }
     MjcfGeom* g = &m->geoms[m->geom_count++];
@@ -647,9 +706,9 @@ static inline void mjcf_add_geom(MjcfModel* m, int body, const char* tag,
     mjcf_attr(tag, "material", g->material, (int)sizeof(g->material));
     char cls[MJCF_MAX_NAME];
     if (mjcf_attr(tag, "class", cls, (int)sizeof(cls))) {
-        snprintf(g->klass, sizeof(g->klass), "%s", cls);
+        mjcf_strlcpy(g->klass, (int)sizeof(g->klass), cls);
     } else if (klass && klass[0]) {
-        snprintf(g->klass, sizeof(g->klass), "%s", klass);
+        mjcf_strlcpy(g->klass, (int)sizeof(g->klass), klass);
     }
     const MjcfClass* c = mjcf_class_of(m, g->klass);
     mjcf_apply_class_geom(g, c);
@@ -688,6 +747,7 @@ static inline void mjcf_add_geom(MjcfModel* m, int body, const char* tag,
 static inline void mjcf_add_joint(MjcfModel* m, int parent, int child,
         const char* tag, const char* klass) {
     if (m->joint_count >= MJCF_MAX_JOINTS) {
+        mjcf_overflow(m, "joints");
         return;
     }
     MjcfJoint* j = &m->joints[m->joint_count++];
@@ -793,6 +853,7 @@ static const char* mjcf_parse_body(MjcfModel* m, const char* p, int parent,
         }
         if (mjcf_tag_is(tag, "body") && !mjcf_tag_close(tag)) {
             if (m->body_count >= MJCF_MAX_BODIES) {
+                mjcf_overflow(m, "bodies");
                 if (!mjcf_self_close(tag)) {
                     p = mjcf_skip_to(p, "body");
                 }
@@ -857,6 +918,7 @@ static const char* mjcf_parse_worldbody(MjcfModel* m, const char* p,
         }
         if (mjcf_tag_is(tag, "body") && !mjcf_tag_close(tag)) {
             if (m->body_count >= MJCF_MAX_BODIES) {
+                mjcf_overflow(m, "bodies");
                 if (!mjcf_self_close(tag)) {
                     p = mjcf_skip_to(p, "body");
                 }
@@ -1066,19 +1128,19 @@ static inline int mjcf_load(MjcfModel* m, const char* path, int z_up) {
     memset(m, 0, sizeof(*m));
     m->root = -1;
     m->z_up = z_up;
-    snprintf(m->path, sizeof(m->path), "%s", path);
+    mjcf_strlcpy(m->path, (int)sizeof(m->path), path);
     mjcf_dirname(path, m->dir, (int)sizeof(m->dir));
-    snprintf(m->meshdir, sizeof(m->meshdir), "%s", m->dir);
+    mjcf_strlcpy(m->meshdir, (int)sizeof(m->meshdir), m->dir);
     char* xml = mjcf_read_file(path);
     if (!xml) {
-        snprintf(m->error, sizeof(m->error), "cannot open %s", path);
+        mjcf_set_error(m, "cannot open ", path);
         return 0;
     }
     mjcf_strip_comments(xml);
     mjcf_parse_xml(m, xml, m->dir, 0);
     free(xml);
     if (m->body_count < 1) {
-        snprintf(m->error, sizeof(m->error), "no bodies in %s", path);
+        mjcf_set_error(m, "no bodies in ", path);
         return 0;
     }
     if (m->root < 0) {
@@ -1168,6 +1230,9 @@ static inline void mjcf_add_body_armature(B3Body* b, float armature) {
 }
 
 static inline void mjcf_add_armature(B3World* w, int jid, float armature) {
+    if (!w || jid < 0 || jid >= w->joint_count) {
+        return;
+    }
     B3Joint* j = &w->joints[jid];
     mjcf_add_body_armature(&w->bodies[j->body_a], armature);
     mjcf_add_body_armature(&w->bodies[j->body_b], armature);
@@ -1198,7 +1263,7 @@ static inline int mjcf_spawn(const MjcfModel* m, B3World* w, MjcfSpawn* s,
         if (i == m->root) {
             s->root = id;
         }
-        if (mb->has_inertial && mb->mass > 0.0f) {
+        if (id >= 0 && mb->has_inertial && mb->mass > 0.0f) {
             b3_set_inertial(w, id, mb->mass, mb->com, mb->inertia);
         }
     }
@@ -1244,12 +1309,14 @@ static inline int mjcf_spawn(const MjcfModel* m, B3World* w, MjcfSpawn* s,
         int jid = b3_create_revolute(w, pa, pb,
             mj->anchor_parent, mj->anchor_child, mj->axis_parent);
         s->joint_map[i] = jid;
-        if (mj->has_limit) {
-            b3_joint_enable_limit(w, jid, 1);
-            b3_joint_set_limits(w, jid, mj->lower, mj->upper);
-        }
-        if (mj->armature > 0.0f) {
-            mjcf_add_armature(w, jid, mj->armature);
+        if (jid >= 0) {
+            if (mj->has_limit) {
+                b3_joint_enable_limit(w, jid, 1);
+                b3_joint_set_limits(w, jid, mj->lower, mj->upper);
+            }
+            if (mj->armature > 0.0f) {
+                mjcf_add_armature(w, jid, mj->armature);
+            }
         }
     }
     s->n_joints = m->joint_count;
@@ -1257,6 +1324,9 @@ static inline int mjcf_spawn(const MjcfModel* m, B3World* w, MjcfSpawn* s,
 }
 
 static inline void mjcf_sync_body(B3World* w, int id, B3Vec3 pos, B3Quat rot) {
+    if (!w || id < 0 || id >= w->body_count) {
+        return;
+    }
     B3Body* b = &w->bodies[id];
     b->position = pos;
     b->rotation = b3_qnorm(rot);
@@ -1284,6 +1354,9 @@ static inline void mjcf_rotate_subtree(const MjcfModel* m, B3World* w,
             continue;
         }
         int id = s->body_map[i];
+        if (id < 0 || id >= w->body_count) {
+            continue;
+        }
         B3Body* b = &w->bodies[id];
         B3Vec3 p = b3_add(origin, b3_rotate(q, b3_sub(b->position, origin)));
         B3Quat r = b3_qnorm(b3_qmul(q, b->rotation));
