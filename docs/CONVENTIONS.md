@@ -20,7 +20,9 @@ All claims below are verified against `src/puffysics/*.inl`.
   normal load. `B3_STATIC_RESTITUTION` changes static-pair behavior.
 - **Contacts**: speculative margin `B3_SPECULATIVE` (0.02), linear slop
   `B3_LINEAR_SLOP` (0.005), max 4 points per manifold. Normals point
-  from shape A to shape B.
+  from shape A to shape B. Default `B3_ART_CONTACTS=0` uses independent-body
+  contact effective masses with the joint solver; `1` opts into
+  articulation-aware response for supported jointed worlds.
 - **Joints**: revolute axis is local Z of `local_rot_a` at creation;
   `b3_joint_angle` returns twist about the hinge axis.
 - **Timestep**: `b3_step(w, dt, substeps)` runs `max(substeps,1)` substeps
@@ -35,6 +37,7 @@ All claims below are verified against `src/puffysics/*.inl`.
 - **Capacities**: compile-time ABI; see `docs/API.md`. Defaults fit an
   articulated agent plus spare cubes (80/128/128/32).
 - **GPU layout**: one `B3World` per thread (`b3_step_kernel`). The world
-  is AoS; measured kernel cost is 160 regs/thread with ~59 KB of
-  per-thread local (stack) traffic on sm_86 — see profiling notes before
-  changing batch layout.
+  is AoS. Register and local-memory requirements depend on capacities,
+  contact mode, solver flags, and compiler settings. Measure the kernel
+  compiled for your environment; a different configuration can have very
+  different resource usage.

@@ -55,7 +55,7 @@
  *   B3_MAX_BODIES / B3_MAX_SHAPES / B3_MAX_CONTACTS / B3_MAX_JOINTS
  *   B3_CONFIG_SIGNATURE (derived; query via b3_config_signature)
  *   B3_JOINT_ITERS / B3_RELAX_ITERS (positive solver iteration counts)
- *   B3_ART_CONTACTS (0 compiles without articulation contact mass)
+ *   B3_ART_CONTACTS (0 default; 1 opts into articulation contact response)
  *   B3_USER_FORCES (optional per-substep force hook)
  * Everything else in this file is INTERNAL / EXPERIMENTAL / ABLATION:
  *   B3_MERGE_WARM_CACHE, B3_COMPACT_PAIRS, B3_UNCLAMPED_ROTATION,
@@ -190,14 +190,15 @@
 #define B3_RSQRT_MATH 0
 #endif
 
-/* 1: jointed worlds use Delassus contact mass/apply in b3_solve_contacts
- * and in packed-GS interleaved contacts (b3_solve_contacts_gs_w).
- * Grain worlds (joint_count==0) stay on independent 1/m. Joint GS for
- * motors/springs/limits/welds is unchanged. Packed GS builds B3Art once
- * per solve. Rolling resistance applies in the velocity pass. Tree-dual
- * reuses the same packed-GS Delassus apply. Set 0 to compile without art. */
+/* Default 0: independent-body contact effective masses with the joint GS
+ * solver, for batched RL throughput. Motors, springs, limits and welds stay
+ * available. Set 1 before including the core to opt into Delassus contact
+ * mass/apply for jointed worlds and the b3_art_* API. That mode changes the
+ * contact response and can be substantially more expensive; it is not a
+ * drop-in accuracy/performance equivalent. Worlds without joints use the
+ * independent-body path in either mode. */
 #ifndef B3_ART_CONTACTS
-#define B3_ART_CONTACTS 1
+#define B3_ART_CONTACTS 0
 #endif
 
 /* Optional per-substep force law. Define before include. The hook may add

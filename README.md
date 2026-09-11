@@ -92,7 +92,9 @@ step. Joint motors, limits, and springs are also available.
 
 For a batch of worlds, include `b3_batch.cuh`. It supports worlds embedded in
 your own environment structs, optional masks for stepping and reset, and
-CUDA launches on a stream you supply. You can also call `b3_step` directly
+CUDA launches on a stream you supply. `b3_batch_step` is a serial CPU loop;
+use PufferLib's workers for CPU parallelism or `b3_batch_step_gpu` for CUDA.
+You can also call `b3_step` directly
 inside a kernel that computes actions, physics, rewards, and observations.
 
 See the [integration guide](docs/RL_LIBRARY.md) for memory ownership, resets,
@@ -119,11 +121,42 @@ There is no separate library binary to compile. To run the standalone CPU
 examples without PufferLib:
 
 ```sh
-cmake -S . -B build -DPUFFYSICS_BUILD_EXAMPLES=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPUFFYSICS_BUILD_EXAMPLES=ON
 cmake --build build
 ./build/examples/minimal_cpu
 ./build/examples/batch_cpu
 ```
+
+Puffysics is compiled as part of your environment. Select `Release` in the
+**consuming project** too; installing the headers does not set optimization
+flags for downstream builds. With a multi-configuration generator, use
+`cmake --build build --config Release`.
+
+## Comparing performance
+
+The default `B3_ART_CONTACTS=0` uses independent-body contact effective masses
+with the joint solver for batched RL throughput. Motors, springs, limits,
+and welds remain available. Earlier releases defaulted to articulation-aware
+contacts; to retain that behavior, define `B3_ART_CONTACTS=1` before including
+the core. The two modes can produce different trajectories.
+
+When updating an existing environment, copy the new headers, remove any
+explicit `B3_ART_CONTACTS=1` setting if you want the fast default, and rebuild
+all C/CUDA source files. Existing binaries do not pick up header changes.
+
+Use an optimized build (`-O2` or `-O3` for C/C++), and omit `--debug` from the
+PufferLib commands above. Record the CPU or CUDA backend, number of worlds,
+timestep, substeps, solver settings, and compile-time capacities alongside
+timings. Compare physics throughput separately from training throughput.
+At 4,096 environments, one vector step counts as 4,096 environment steps;
+report `4096 * vector_steps / elapsed_seconds`. The sample CUDA adapter runs
+the full environment step on the GPU, including rewards and episode resets.
+
+The CUDA helpers launch one thread per world. Small batches can spend most
+of their time launching kernels; measure the batch sizes you intend to train
+with. Keep simulation state on the device and time completed GPU work with
+CUDA events. See the [performance checklist](docs/RL_LIBRARY.md#comparing-performance)
+for making a reproducible comparison with MuJoCo.
 
 ## What is included
 
@@ -135,6 +168,21 @@ World capacities are fixed at compile time. Set `B3_MAX_BODIES`,
 `B3_MAX_SHAPES`, `B3_MAX_CONTACTS`, and `B3_MAX_JOINTS` for your scene before
 including the core, and use the same settings in every source file.
 See [conventions](docs/CONVENTIONS.md) for units, frames, and memory layout.
+
+The headers contain function implementations as well as types and constants;
+including them compiles the physics into your program.
+
+| File | Purpose |
+| --- | --- |
+| `puffysics.cuh` | Self-contained core to copy into your environment; works in C, C++, and CUDA |
+| `b3_batch.cuh` | Optional CPU/CUDA batch helpers; includes the core |
+| `include/puffysics/puffysics.cuh` | Development entry point that includes the editable `src/puffysics/*.inl` files; requires the source checkout |
+| `dist/puffysics.cuh` | Identical generated copy of the root core header for distribution |
+
+These core entry points provide the same implementation without a runtime
+wrapper. CMake installs the self-contained core under both `puffysics.cuh`
+and `puffysics/puffysics.cuh`, so installed users do not need `src/`.
+Include optional module headers only for the features you use.
 
 To modify the physics implementation, edit `src/puffysics/*.inl` or the
 relevant module header, then regenerate the distributable headers:

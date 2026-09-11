@@ -65,7 +65,7 @@ internal invariants in debug builds only.
 ## Naming
 
 C prefixes are subsystem namespaces, kept stable: `b3_` core,
-`b3_art_` (folded into core flow), `b3_nbody_`, `b3_fluid_`,
+`b3_art_` (opt in with `B3_ART_CONTACTS=1`), `b3_nbody_`, `b3_fluid_`,
 `b3_loose_`, `nbody_`, `dat_`/`dat_gpu_`, `mjcf_`, `stl_`. No global
 rename is planned; any future `Puffysics`-prefixed API ships beside the
 old names with a migration note, not as a flag day.
@@ -83,6 +83,13 @@ tests, currently `1e-3` worst-case drift on the n-body probe.
 `B3_MAX_SHAPES`, `B3_MAX_CONTACTS`, `B3_MAX_JOINTS`, `B3_JOINT_ITERS`,
 `B3_RELAX_ITERS`, `B3_ART_CONTACTS`, `B3_USER_FORCES`. Capacities are
 ABI; `b3_config_signature()` reports them.
+
+`B3_ART_CONTACTS` defaults to `0`: independent-body contact effective masses
+with the joint solver. Set it to `1` before including the core to enable
+articulation-aware contact response and the `b3_art_*` functions, including
+`b3_art_step`. This was the default in earlier releases. Changing the mode
+can change trajectories and throughput; rebuild every translation unit with
+the same definition. The ordinary `b3_step` API is available in either mode.
 
 **Internal / experimental / ablation** (not a supported contract;
 `#error` on removed knobs): `B3_MERGE_WARM_CACHE`, `B3_COMPACT_PAIRS`,

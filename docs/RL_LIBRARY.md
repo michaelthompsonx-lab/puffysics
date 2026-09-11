@@ -168,7 +168,7 @@ distinct module from rigid-body batching.
 ## Run the standalone examples
 
 ```sh
-cmake -S . -B build-library -DPUFFYSICS_BUILD_EXAMPLES=ON
+cmake -S . -B build-library -DCMAKE_BUILD_TYPE=Release -DPUFFYSICS_BUILD_EXAMPLES=ON
 cmake --build build-library
 ./build-library/examples/minimal_cpu
 ./build-library/examples/batch_cpu
@@ -178,3 +178,67 @@ These examples need a C compiler and CMake, without PufferLib or a GPU.
 Build the native CUDA environment through PufferLib using the commands above.
 Tests and benchmarks are not part of the user installation. GPU runtime
 validation and training require an accessible NVIDIA device and driver.
+
+## Comparing performance
+
+For a batch of 4,096 independent environments, one vector step produces
+4,096 environment steps. Report aggregate throughput as
+`environment_count * vector_steps / elapsed_seconds`. For example, 800,000
+environment steps/s at that batch size means about 195 vector steps/s, or
+5.12 ms per vector step. Physics substeps are internal work; do not count
+each substep as another environment transition.
+
+The sample CUDA adapter runs action application, physics, rewards,
+observations, and episode resets on the GPU. Measure the complete `puf_step`
+path for environment throughput, including its reset work. Separately
+report physics-only timings and end-to-end training timings, which include
+policy inference and optimization. A single-world CPU timing does not
+measure this GPU environment path.
+
+The default `B3_ART_CONTACTS=0` uses independent-body contact effective masses
+with the existing joint solver for batched RL throughput. Set it to `1`
+before including the core to opt into articulation-aware contact response
+and the `b3_art_*` API. Both modes support the ordinary joint solver's motors,
+springs, limits, and welds. The choice changes contact dynamics as well as
+performance; record it explicitly in comparisons and validate your task's
+required accuracy.
+
+Earlier releases defaulted to `1`. To adopt the fast default, replace the
+vendored headers, remove any explicit `B3_ART_CONTACTS=1` override, and rebuild
+all translation units. To preserve the previous contact behavior, use the
+same explicit `B3_ART_CONTACTS=1` definition in every translation unit.
+
+Puffysics is header-only: the source file that includes it determines its
+optimization settings. Use an optimized consumer build (`Release` in CMake,
+or `-O2`/`-O3` for C/C++). Installing Puffysics with a particular build type
+does not configure the application that later includes it. PufferLib's native
+build commands above should be run without `--debug` when measuring throughput.
+
+For a useful comparison, record these together with both engine versions:
+
+- **Execution:** CPU model and worker count, or GPU model and CUDA version;
+  batch size; and whether MuJoCo means native CPU, MJX, or another GPU backend.
+  `b3_batch_step` is serial; CPU workers must own disjoint worlds. The CUDA
+  helper and the sample fused kernel use one thread per world.
+- **Workload:** the same scene, body/shape/joint counts, collision filters,
+  controls, episode resets, timestep, and simulated duration per environment
+  step. `b3_step(w, dt, substeps)` advances a total of `dt`, not `dt * substeps`.
+  Record solver iterations and check comparable contact and joint accuracy;
+  different solvers do not necessarily need equal iteration counts.
+- **Configuration:** all `B3_MAX_*` capacities and solver feature definitions.
+  Capacities size world storage and solver scratch arrays; choose sufficient
+  bounds for the scene and check `b3_world_error` for overflow. Rebuild every
+  source file with the same settings. Specialized experimental solver flags
+  can change supported physics, so they are not general performance presets.
+- **Measurement:** separate physics stepping from allocation, model loading,
+  rendering, policy inference, and training. Warm up first, run repeated
+  trials, and report completed environment steps per second. For GPU runs,
+  use CUDA events on the simulation stream and wait for the end event before
+  reading elapsed time. Keep state on the device between steps and report
+  transfers or per-step synchronization if the application requires them.
+
+MuJoCo's [native `testspeed` sample](https://mujoco.readthedocs.io/en/stable/programming/samples.html#testspeed)
+documents parallel rollout timing and controlled action noise to avoid
+artificially favorable timings from settled, warm-started scenes. A toy
+free-fall benchmark or a fully settled scene alone cannot establish which
+engine is faster for an actively controlled RL task.
